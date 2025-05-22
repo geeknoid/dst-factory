@@ -42,14 +42,13 @@
 //! Generic parameters and `where` clauses from the struct definition are correctly
 //! propagated to the generated `impl` block and the method signatures.
 //!
-//! ### Panics
+//! ### Errors
 //!
-//! This macro will cause a compile-time error (panic) if:
+//! This macro will cause a compile-time error if:
 //! - The input item is not a struct with named fields.
 //! - The struct has no fields (a tail field is required).
 //! - The last field of the struct is not a slice `[T]` or `str`.
 //! - The arguments to `#[make_dst_builder(...)]` are malformed.
-//! - Internal layout calculations fail (e.g., due to excessively large types), though this is rare.
 //!
 //! ### Example
 //!
@@ -108,7 +107,6 @@ use std::fmt::Write;
 use syn::{
     Field, Fields, Generics, Ident, ItemStruct, Type, TypeSlice, Visibility,
     parse::{Parse, ParseStream, Result as SynResult},
-    parse_macro_input,
     spanned::Spanned,
 }; // For write! macro
 
@@ -163,7 +161,7 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
         Fields::Named(fields_named) => {
             if fields_named.named.is_empty() {
                 return Err(syn::Error::new_spanned(
-                    &input_struct.fields,
+                    fields_named, // Pass the FieldsNamed struct itself
                     "make_dst_builder requires at least one field (the tail field).",
                 ));
             }
@@ -171,10 +169,12 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
             for (i, field) in fields_named.named.iter().enumerate() {
                 if i < num_fields - 1 {
                     header_field_structs.push(field);
-                    let field_ident = field
-                        .ident
-                        .as_ref()
-                        .expect("Named field should have an ident");
+                    let field_ident = field.ident.as_ref().ok_or_else(|| {
+                        syn::Error::new(
+                            field.span(),
+                            "Internal error: Named field is missing an identifier.",
+                        )
+                    })?;
                     header_field_idents.push(field_ident);
                     let field_ty = &field.ty;
                     build_fn_header_params.push(quote! { #field_ident: #field_ty });
@@ -186,12 +186,12 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
             tail_field_name_ident = tail_field
                 .ident
                 .as_ref()
-                .expect("Tail field must be named.");
+                .ok_or_else(|| syn::Error::new(tail_field.span(), "Tail field must be named."))?;
             tail_field_name_str_val = tail_field_name_ident.to_string();
         }
         Fields::Unnamed(_) | Fields::Unit => {
             return Err(syn::Error::new_spanned(
-                &input_struct.fields,
+                &input_struct.fields, // Pass the Fields struct itself
                 "make_dst_builder only supports structs with named fields.",
             ));
         }
@@ -210,16 +210,18 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
 fn generate_header_layout_code(
     header_field_structs: &[&Field],
     struct_name_ident: &Ident,
-) -> proc_macro2::TokenStream {
+) -> SynResult<proc_macro2::TokenStream> {
     let mut layout_calculations_for_header = Vec::new();
     let mut layout_extend_calls_for_header = Vec::new();
     let mut header_field_layout_vars = Vec::new();
 
     for field in header_field_structs {
-        let ident = field
-            .ident
-            .as_ref()
-            .expect("Header field should have an ident");
+        let ident = field.ident.as_ref().ok_or_else(|| {
+            syn::Error::new(
+                field.span(),
+                "Internal error: Header field is missing an identifier during layout calculation.",
+            )
+        })?;
         let ty = &field.ty;
         let layout_var = Ident::new(&format!("layout_field_{ident}"), ident.span());
         header_field_layout_vars.push(layout_var.clone());
@@ -239,10 +241,9 @@ fn generate_header_layout_code(
                 .push(quote! { let #layout_header_full_ident = #first_layout_var; });
         } else {
             let second_layout_var = &header_field_layout_vars[1];
-            let second_field_ident = header_field_structs[1]
-                .ident
-                .as_ref()
-                .expect("Header field should have an ident");
+            let second_field_ident = header_field_structs[1].ident.as_ref().ok_or_else(|| {
+                syn::Error::new(header_field_structs[1].span(), "Internal error: Header field is missing an identifier during layout extension.")
+            })?;
             let second_field_ident_str = second_field_ident.to_string();
             let offset_var = Ident::new(
                 &format!("_offset_{second_field_ident}"),
@@ -255,10 +256,9 @@ fn generate_header_layout_code(
             });
             for i in 2..header_field_layout_vars.len() {
                 let current_layout_var = &header_field_layout_vars[i];
-                let current_field_ident = header_field_structs[i]
-                    .ident
-                    .as_ref()
-                    .expect("Header field should have an ident");
+                let current_field_ident = header_field_structs[i].ident.as_ref().ok_or_else(|| {
+                    syn::Error::new(header_field_structs[i].span(), "Internal error: Header field is missing an identifier during layout extension.")
+                })?;
                 let current_field_ident_str = current_field_ident.to_string();
                 let offset_var = Ident::new(
                     &format!("_offset_{current_field_ident}"),
@@ -273,10 +273,10 @@ fn generate_header_layout_code(
             }
         }
     }
-    quote! {
+    Ok(quote! {
         #( #layout_calculations_for_header )*
         #( #layout_extend_calls_for_header )*
-    }
+    })
 }
 
 fn generate_doc_params_string(
@@ -346,7 +346,7 @@ fn generate_build_method_for_slice(
     quote! {
         #[doc = #method_doc_slice]
         #[allow(unused_variables)]
-        #[allow(clippy::transmute_undefined_repr)] // Clippy suppression for transmute
+        #[allow(clippy::transmute_undefined_repr)]
         #method_visibility fn #build_fn_name_ident_slice(#( #build_fn_header_params, )* #tail_field_name_ident_for_access: #build_fn_tail_param_type_slice) -> Box<Self> {
             use ::std::alloc::{Layout, alloc, handle_alloc_error};
             use ::std::{mem, ptr};
@@ -430,7 +430,7 @@ fn generate_build_with_method_for_slice(
     quote! {
         #[doc = #method_doc_iter]
         #[allow(unused_variables)]
-        #[allow(clippy::transmute_undefined_repr)] // Clippy suppression for transmute
+        #[allow(clippy::transmute_undefined_repr)]
         #method_visibility fn #build_fn_name_ident_iter<#iter_generic_param>(#( #build_fn_header_params, )* #tail_field_name_ident_for_access: #build_fn_tail_param_type_iter) -> Box<Self> #build_fn_where_clause_iter {
             use ::std::alloc::{Layout, alloc, handle_alloc_error};
             use ::std::{mem, ptr};
@@ -502,7 +502,7 @@ fn generate_build_method_for_str(
     quote! {
         #[doc = #method_doc_str]
         #[allow(unused_variables)]
-        #[allow(clippy::transmute_undefined_repr)] // Clippy suppression for transmute
+        #[allow(clippy::transmute_undefined_repr)]
         #method_visibility fn #build_fn_name_ident_str(#( #build_fn_header_params, )* #tail_field_name_ident_for_access: #build_fn_tail_param_type_str) -> Box<Self> {
             use ::std::alloc::{Layout, alloc, handle_alloc_error};
             use ::std::{mem, ptr};
@@ -532,30 +532,32 @@ fn generate_build_method_for_str(
 // --- Main Macro ---
 #[proc_macro_attribute]
 pub fn make_dst_builder(attr_args_ts: TokenStream, item_ts: TokenStream) -> TokenStream {
+    let result = make_dst_builder_impl(attr_args_ts.into(), item_ts.into());
+    result.unwrap_or_else(|err| err.to_compile_error()).into()
+}
+
+fn make_dst_builder_impl(
+    attr_args_ts: proc_macro2::TokenStream,
+    item_ts: proc_macro2::TokenStream,
+) -> SynResult<proc_macro2::TokenStream> {
     let builder_args = if attr_args_ts.is_empty() {
         MakeDstBuilderArgs {
             visibility: Visibility::Inherited,
             base_method_name: Ident::new("build", proc_macro2::Span::call_site()),
         }
     } else {
-        match syn::parse(attr_args_ts) {
-            Ok(args) => args,
-            Err(e) => return e.to_compile_error().into(),
-        }
+        syn::parse2(attr_args_ts)?
     };
-    let input_struct = parse_macro_input!(item_ts as ItemStruct);
+    let input_struct: ItemStruct = syn::parse2(item_ts)?;
 
     let struct_name_ident = &input_struct.ident;
     let struct_generics: &Generics = &input_struct.generics;
     let (impl_generics, ty_generics, where_clause) = struct_generics.split_for_impl();
 
-    let field_info = match extract_field_info(&input_struct) {
-        Ok(info) => info,
-        Err(e) => return e.to_compile_error().into(),
-    };
+    let field_info = extract_field_info(&input_struct)?;
 
     let header_layout_calc_tokens =
-        generate_header_layout_code(&field_info.header_field_structs, struct_name_ident);
+        generate_header_layout_code(&field_info.header_field_structs, struct_name_ident)?;
 
     let mut generated_build_methods: Vec<proc_macro2::TokenStream> = Vec::new();
     let offset_of_tail_payload_ident = Ident::new(
@@ -596,12 +598,10 @@ pub fn make_dst_builder(attr_args_ts: TokenStream, item_ts: TokenStream) -> Toke
             ));
         }
         _ => {
-            return syn::Error::new_spanned(
+            return Err(syn::Error::new_spanned(
                 &field_info.tail_field.ty,
                 "The last field of a struct for make_dst_builder must be a slice [T] or str.",
-            )
-            .to_compile_error()
-            .into();
+            ));
         }
     }
 
@@ -616,5 +616,5 @@ pub fn make_dst_builder(attr_args_ts: TokenStream, item_ts: TokenStream) -> Toke
         #build_methods_impl_block
     };
 
-    TokenStream::from(expanded)
+    Ok(expanded)
 }
