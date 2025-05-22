@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = [
+    "tail-extend",
+    "examples",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+categories = ["memory-management"]
+description = "Macros to implement C's flexible array members in Rust"
+keywords = ["efficiency", "memory"]
+repository = "https://github.com/geeknoid/tail-extend"
+license = "MIT"
+authors = ["Martin Taillefer <martin@taillefer.org>"]
+readme = "README.md"
+rust-version = "1.85.0"
+
+[workspace.dependencies]
+tail-extend = { path = "tail-extend" }
+quote = "1.0.40"
+syn = { version = "2.0.101", features = ["full", "printing", "parsing", "visit", "visit-mut", "fold", "clone-impls", "derive", "extra-traits"] }
+proc-macro2 = "1.0.95"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+
+[profile.bench]
+codegen-units = 1
+lto = "fat"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+debug = true
+strip = "none"
