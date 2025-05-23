@@ -1,0 +1,5 @@
+error: Last field must be a dynamically sized type like [T] or str
+ --> tests/ui/dst_field_not_last.rs:6:11
+  |
+6 |     data: i32,
+  |           ^^^

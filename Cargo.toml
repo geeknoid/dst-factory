@@ -20,8 +20,9 @@ rust-version = "1.85.0"
 [workspace.dependencies]
 tail-extend = { path = "tail-extend" }
 quote = "1.0.40"
-syn = { version = "2.0.101", features = ["full", "visit", "extra-traits"] }
+syn = { version = "2.0.101", features = ["full", "visit", "extra-traits", "clone-impls"], default-features = false }
 proc-macro2 = "1.0.95"
+trybuild = "1.0.105"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

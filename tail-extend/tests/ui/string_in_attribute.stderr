@@ -1,0 +1,5 @@
+error: Unexpected input
+ --> tests/ui/string_in_attribute.rs:3:20
+  |
+3 | #[make_dst_builder("A String Literal")]
+  |                    ^^^^^^^^^^^^^^^^^^

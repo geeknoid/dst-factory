@@ -1,0 +1,5 @@
+error: Unexpected input
+ --> tests/ui/bad_visibility.rs:3:28
+  |
+3 | #[make_dst_builder(create, XYZ)]
+  |                            ^^^

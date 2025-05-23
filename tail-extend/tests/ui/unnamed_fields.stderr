@@ -1,0 +1,5 @@
+error: Structs with unnamed fields are not supported
+ --> tests/ui/unnamed_fields.rs:4:21
+  |
+4 | struct UnnamedFields(i32, str);
+  |                     ^^^^^^^^^^

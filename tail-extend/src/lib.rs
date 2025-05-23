@@ -115,15 +115,15 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
 use std::collections::HashSet;
+use syn::parse::discouraged::Speculative;
 use syn::{
-    Field, Fields, GenericParam, Generics, Ident, ItemStruct, Lifetime, Type, TypePath, TypeSlice,
-    Visibility,
+    Field, Fields, GenericParam, Generics, Ident, ItemStruct, Lifetime, Token, Type, TypePath,
+    TypeSlice, Visibility,
     parse::{Parse, ParseStream, Result as SynResult},
     punctuated::Punctuated,
     spanned::Spanned,
     visit::{self, Visit},
 };
-
 // --- Helper Struct for Macro Arguments ---
 
 struct MakeDstBuilderArgs {
@@ -134,106 +134,56 @@ struct MakeDstBuilderArgs {
 
 impl Parse for MakeDstBuilderArgs {
     fn parse(input: ParseStream) -> SynResult<Self> {
-        // Default values
-        let mut visibility: Visibility = Visibility::Inherited;
-        let mut base_method_name = Ident::new("build", input.span());
-        let mut no_std = false;
+        let mut result = Self {
+            visibility: Visibility::Inherited,
+            base_method_name: Ident::new("build", input.span()),
+            no_std: false,
+        };
 
-        // Exit early if there are no arguments
-        if input.is_empty() {
-            return Ok(Self {
-                visibility,
-                base_method_name,
-                no_std,
-            });
-        }
-
-        // Parse each argument in order: method_name, visibility, no_std
-        // First parameter: Check if it's a method name or no_std
+        // Check for method name
         if input.peek(syn::Ident) {
-            let ident: Ident = input.parse()?;
-            if ident == "no_std" {
-                no_std = true;
-                // No more arguments allowed after standalone no_std
+            let ahead = input.fork();
+            let ident = ahead.parse::<Ident>()?;
+            if ident != "no_std" && ident != "pub" {
+                result.base_method_name = ident;
+
+                input.advance_to(&ahead);
                 if !input.is_empty() {
-                    return Err(
-                        input.error("'no_std' must be the only argument when specified first")
-                    );
+                    input
+                        .parse::<Token![,]>()
+                        .map_err(|_| input.error("Expected comma after method name"))?;
                 }
-                return Ok(Self {
-                    visibility,
-                    base_method_name,
-                    no_std,
-                });
             }
-
-            // It's a custom method name
-            base_method_name = ident;
-
-            // If this is the end, return early
-            if input.is_empty() {
-                return Ok(Self {
-                    visibility,
-                    base_method_name,
-                    no_std,
-                });
-            }
-
-            // Must have a comma after method name if more parameters follow
-            let _comma: syn::Token![,] = input
-                .parse()
-                .map_err(|_| input.error("Expected comma after method name"))?;
-        } else if !input.is_empty() {
-            return Err(input.error("Expected identifier as first argument"));
         }
 
-        // Second parameter: Check for visibility (must start with 'pub')
-        if !input.is_empty() && input.peek(syn::Token![pub]) {
-            visibility = input
+        // Check for visibility
+        if input.peek(Token![pub]) {
+            result.visibility = input
                 .parse()
                 .map_err(|_| input.error("Failed to parse visibility"))?;
 
-            // If this is the end, return early
-            if input.is_empty() {
-                return Ok(Self {
-                    visibility,
-                    base_method_name,
-                    no_std,
-                });
-            }
-
-            // Must have a comma after visibility if more parameters follow
-            let _comma: syn::Token![,] = input
-                .parse()
-                .map_err(|_| input.error("Expected comma after visibility"))?;
-        }
-
-        // Third parameter: Must be no_std if present
-        if !input.is_empty() {
-            if input.peek(syn::Ident) {
-                let ident: Ident = input.parse()?;
-                if ident == "no_std" {
-                    no_std = true;
-                } else {
-                    return Err(input.error(format!(
-                        "Expected 'no_std' as the third argument, found '{ident}'"
-                    )));
-                }
-            } else {
-                return Err(input.error("Expected the 'no_std' identifier"));
+            if !input.is_empty() {
+                input
+                    .parse::<Token![,]>()
+                    .map_err(|_| input.error("Expected comma after visibility"))?;
             }
         }
 
-        // Ensure we've consumed all tokens
-        if !input.is_empty() {
-            return Err(input.error("Expected end of input, found additional tokens"));
+        // Check for no_std
+        if input.peek(syn::Ident) {
+            let ahead = input.fork();
+            let ident = ahead.parse::<Ident>()?;
+            if ident == "no_std" {
+                result.no_std = true;
+                input.advance_to(&ahead);
+            }
         }
 
-        Ok(Self {
-            visibility,
-            base_method_name,
-            no_std,
-        })
+        if input.is_empty() {
+            Ok(result)
+        } else {
+            Err(input.error("Unexpected input"))
+        }
     }
 }
 
@@ -348,9 +298,6 @@ impl<'ast> Visit<'ast> for GenericUsageVisitor<'_> {
                 if self.defined_const_param_idents.contains(ident) {
                     self.used_params.consts.insert(ident.clone());
                 }
-                if self.defined_type_param_idents.contains(ident) {
-                    self.used_params.types.insert(ident.clone());
-                }
             }
         }
         visit::visit_expr(self, ex); // Default traversal
@@ -403,34 +350,27 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
             let last_field = fields_iter.next_back().unwrap(); // Safe because we checked for emptiness above
 
             // Verify the last field is a DST with unsized type [T] or str
-            let is_dst = match &last_field.ty {
+            match &last_field.ty {
                 Type::Slice(_) => true,
                 Type::Path(type_path) if type_path.path.is_ident("str") => true,
                 Type::Path(TypePath { path, .. })
-                    if path.segments.last().is_some_and(|seg| seg.ident == "str") =>
+                    if path.segments.last().is_some_and(|s| s.ident == "str") =>
                 {
                     true
                 }
-                _ => false,
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        &last_field.ty,
+                        "Last field must be a dynamically sized type like [T] or str",
+                    ));
+                }
             };
-
-            if !is_dst {
-                return Err(syn::Error::new_spanned(
-                    &last_field.ty,
-                    "Last field must be a dynamically sized type like [T] or str",
-                ));
-            }
 
             let num_fields = fields_named.named.len();
             for (i, field) in fields_named.named.iter().enumerate() {
                 if i < num_fields - 1 {
                     header_field_structs.push(field);
-                    let field_ident = field.ident.as_ref().ok_or_else(|| {
-                        syn::Error::new(
-                            field.span(),
-                            "Internal error: Named field is missing an identifier.",
-                        )
-                    })?;
+                    let field_ident = field.ident.as_ref().unwrap();
                     header_field_idents.push(field_ident);
                     let field_ty = &field.ty;
                     build_fn_header_params.push(quote! { #field_ident: #field_ty });
@@ -438,21 +378,20 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
             }
             tail_field = fields_named.named.last().unwrap();
             tail_field_name_ident = tail_field.ident.as_ref().unwrap();
+
+            Ok(FieldInfo {
+                header_field_structs,
+                header_field_idents,
+                build_fn_header_params,
+                tail_field,
+                tail_field_name_ident,
+            })
         }
-        Fields::Unnamed(_) | Fields::Unit => {
-            return Err(syn::Error::new_spanned(
-                &input_struct.fields,
-                "Structs with unnamed fields are not supported",
-            ));
-        }
+        Fields::Unnamed(_) | Fields::Unit => Err(syn::Error::new_spanned(
+            &input_struct.fields,
+            "Structs with unnamed fields are not supported",
+        )),
     }
-    Ok(FieldInfo {
-        header_field_structs,
-        header_field_idents,
-        build_fn_header_params,
-        tail_field,
-        tail_field_name_ident,
-    })
 }
 
 #[expect(clippy::too_many_lines)]
@@ -539,7 +478,7 @@ fn generate_header_layout_code(
                 &defined_type_param_idents,
                 &defined_const_param_idents,
             );
-            syn::visit::visit_where_predicate(&mut predicate_visitor, predicate);
+            visit::visit_where_predicate(&mut predicate_visitor, predicate);
 
             let is_relevant = predicate_visitor
                 .used_params
@@ -597,7 +536,7 @@ fn generate_common_build_method(
     let header_field_idents_for_write = &field_info.header_field_idents;
     let no_std = builder_args.no_std;
 
-    // Box and allocation namespace paths based on no_std flag
+    // Box and allocation namespace paths based on the no_std flag
     let box_path = if no_std {
         quote! { ::alloc::boxed::Box }
     } else {
@@ -610,7 +549,7 @@ fn generate_common_build_method(
         quote! { ::std::alloc::alloc }
     };
 
-    // Handle allocation error based on no_std flag
+    // Handle allocation error based on the no_std flag
     let handle_alloc_error = if no_std {
         quote! { panic!("memory allocation failed: out of memory") }
     } else {
@@ -942,7 +881,7 @@ fn make_dst_builder_impl(
                 &layout_header_full_ident,
             ));
         }
-        Type::Path(type_path) if type_path.path.is_ident("str") => {
+        _ => {
             generated_build_methods.push(generate_build_method_for_str(
                 &builder_args,
                 struct_name_ident,
@@ -950,12 +889,6 @@ fn make_dst_builder_impl(
                 &header_layout_calc_tokens,
                 &offset_of_tail_payload_ident,
                 &layout_header_full_ident,
-            ));
-        }
-        _ => {
-            return Err(syn::Error::new_spanned(
-                &field_info.tail_field.ty,
-                "Last field must be a dynamically sized type like [T] or str",
             ));
         }
     }

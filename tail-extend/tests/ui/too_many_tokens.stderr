@@ -1,0 +1,5 @@
+error: Unexpected input
+ --> tests/ui/too_many_tokens.rs:3:26
+  |
+3 | #[make_dst_builder(no_std, XXX)]
+  |                          ^

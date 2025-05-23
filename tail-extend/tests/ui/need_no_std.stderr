@@ -1,0 +1,5 @@
+error: Unexpected input
+ --> tests/ui/need_no_std.rs:3:33
+  |
+3 | #[make_dst_builder(create, pub, X)]
+  |                                 ^

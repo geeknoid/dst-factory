@@ -1,7 +1,5 @@
 #![allow(clippy::literal_string_with_formatting_args)]
 
-use proc_macro2::TokenStream;
-use std::str::FromStr;
 use tail_extend::make_dst_builder;
 
 // Test 1: Basic functionality with str field
@@ -44,8 +42,8 @@ fn test_basic_slice_usage() {
 // Test 3: Custom public builder name
 #[make_dst_builder(create_publicly, pub)]
 struct PublicBuilderStruct {
-    code: u16,
-    message: str,
+    code: std::primitive::u16,
+    message: std::primitive::str,
 }
 
 #[test]
@@ -131,6 +129,25 @@ fn test_generic_lifetime_str_dst() {
         GenericLifetimeStrStruct::build_generic_lifetime_str(&default_key, 78, "another payload");
     assert_eq!(*instance2.key_ref, "");
     assert_eq!(&instance2.payload, "another payload");
+}
+
+// Test 9: Struct with generics and lifetimes for sized fields, and a str DST
+const SOME_CONST: usize = 2;
+
+#[make_dst_builder]
+struct GenericConstStruct<const SZ: usize> {
+    id: usize,
+    array_data: [u8; SZ],
+    more: [u8; SOME_CONST],
+    payload: str,
+}
+
+#[test]
+fn test_generic_const_dst() {
+    let instance: Box<GenericConstStruct<2>> =
+        GenericConstStruct::build(42, [0, 1], [3, 4], "dynamic payload part");
+    assert_eq!(instance.id, 42);
+    assert_eq!(&instance.payload, "dynamic payload part");
 }
 
 // Test 10: Struct with complex field types before DST
@@ -227,155 +244,24 @@ fn test_zst_slice_dst() {
     assert_eq!(instance.unit_slice.len(), 4);
 }
 
-// The following is the placeholder for compile-time error tests
-fn run_macro_logic_for_test(attr_str: &str, item_str: &str) -> String {
-    let attr_ts =
-        TokenStream::from_str(attr_str).expect("Failed to parse attribute string into TokenStream");
-    let item_ts =
-        TokenStream::from_str(item_str).expect("Failed to parse item string into TokenStream");
-
-    // Placeholder implementation for demonstration:
-    // In a real scenario, this calls your macro's processing function.
-    if item_str.contains("ErrorTriggerMultiDst") {
-        return syn::Error::new_spanned(item_ts, "Structs can only have one DST field.")
-            .to_compile_error()
-            .to_string();
-    }
-    if item_str.contains("ErrorTriggerDstNotLast") {
-        return syn::Error::new_spanned(item_ts, "DST field must be the last field.")
-            .to_compile_error()
-            .to_string();
-    }
-    if item_str.contains("ErrorTriggerNonStruct") {
-        return syn::Error::new_spanned(item_ts, "Macro can only be applied to structs.")
-            .to_compile_error()
-            .to_string();
-    }
-    if item_str.contains("ErrorTriggerNoDst") {
-        return syn::Error::new_spanned(item_ts, "No DST field found.")
-            .to_compile_error()
-            .to_string();
-    }
-    if attr_str.contains("ErrorTriggerInvalidAttr") {
-        return syn::Error::new_spanned(attr_ts, "Invalid macro attribute.")
-            .to_compile_error()
-            .to_string();
-    }
-    // If no error trigger, return empty string for placeholder
-    // In reality, you would call your macro's implementation function here, e.g.:
-    // your_crate_name::your_macro_impl_fn(attr_ts, item_ts).to_string()
-    String::new()
+#[test]
+fn test_no_std() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/no_std.rs");
 }
 
 #[test]
-fn test_error_multiple_dst_fields() {
-    let item_code = r"
-        struct MultiDstFail {
-            _field1: u32,
-            ErrorTriggerMultiDst: bool,
-            data1: str,
-            data2: [u8],
-        }
-    ";
-    let expanded_code = run_macro_logic_for_test("", item_code);
-    assert!(
-        expanded_code.contains("compile_error !"),
-        "Expected compile_error in output: {expanded_code}"
-    );
-    assert!(
-        expanded_code.contains("Structs can only have one DST field"),
-        "Incorrect error message: {expanded_code}"
-    );
-}
-
-#[test]
-fn test_error_dst_field_not_last() {
-    let item_code = r"
-        struct DstNotLastFail {
-            ErrorTriggerDstNotLast: bool,
-            name: str,
-            id: u32,
-        }
-    ";
-    let expanded_code = run_macro_logic_for_test("", item_code);
-    assert!(
-        expanded_code.contains("compile_error !"),
-        "Expected compile_error in output: {expanded_code}"
-    );
-    assert!(
-        expanded_code.contains("DST field must be the last field"),
-        "Incorrect error message: {expanded_code}"
-    );
-}
-
-#[test]
-fn test_error_macro_on_enum() {
-    let item_code = r"
-        enum EnumFail { ErrorTriggerNonStruct, Variant1, Variant2 }
-    ";
-    let expanded_code = run_macro_logic_for_test("", item_code);
-    assert!(
-        expanded_code.contains("compile_error !"),
-        "Expected compile_error in output: {expanded_code}"
-    );
-    assert!(
-        expanded_code.contains("Macro can only be applied to structs"),
-        "Incorrect error message: {expanded_code}"
-    );
-}
-
-#[test]
-fn test_error_macro_on_function() {
-    let item_code = r"
-        fn function_fail() { let ErrorTriggerNonStruct = true; }
-    ";
-    let expanded_code = run_macro_logic_for_test("", item_code);
-    assert!(
-        expanded_code.contains("compile_error !"),
-        "Expected compile_error in output: {expanded_code}"
-    );
-    assert!(
-        expanded_code.contains("Macro can only be applied to structs"),
-        "Incorrect error message: {expanded_code}"
-    );
-}
-
-#[test]
-fn test_error_no_dst_field() {
-    let item_code = r"
-        struct NoDstFail {
-            ErrorTriggerNoDst: bool,
-            id: i32,
-            value: String,
-        }
-    ";
-    let expanded_code = run_macro_logic_for_test("", item_code);
-    assert!(
-        expanded_code.contains("compile_error !"),
-        "Expected compile_error in output: {expanded_code}"
-    );
-    assert!(
-        expanded_code.contains("No DST field found"),
-        "Incorrect error message: {expanded_code}"
-    );
-}
-
-#[test]
-fn test_error_invalid_macro_attribute() {
-    let item_code = r"
-        struct ValidStructWithDst {
-            id: i32,
-            data: str,
-        }
-    ";
-    let attr_code = "123_bad_attr_format ErrorTriggerInvalidAttr";
-    let expanded_code = run_macro_logic_for_test(attr_code, item_code);
-    assert!(
-        expanded_code.contains("compile_error !"),
-        "Expected compile_error in output: {expanded_code}"
-    );
-    assert!(
-        expanded_code.contains("Invalid macro attribute"),
-        "Incorrect error message: {expanded_code}"
-    );
+fn test_error_paths() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/string_in_attribute.rs");
+    t.compile_fail("tests/ui/struct_with_no_fields.rs");
+    t.compile_fail("tests/ui/last_field_not_slice_or_str.rs");
+    t.compile_fail("tests/ui/macro_not_on_struct.rs");
+    t.compile_fail("tests/ui/unnamed_fields.rs");
+    t.compile_fail("tests/ui/dst_field_not_last.rs");
+    t.compile_fail("tests/ui/multiple_dst_fields.rs");
+    t.compile_fail("tests/ui/too_many_tokens.rs");
+    t.compile_fail("tests/ui/bad_visibility.rs");
+    t.compile_fail("tests/ui/no_comma_after_visibility.rs");
+    t.compile_fail("tests/ui/need_no_std.rs");
 }
