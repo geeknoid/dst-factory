@@ -181,13 +181,11 @@ impl<'a> GenericUsageVisitor<'a> {
     }
 }
 
-// Elided lifetime 'a here as suggested by clippy
 impl<'ast> Visit<'ast> for GenericUsageVisitor<'_> {
     fn visit_lifetime(&mut self, l: &'ast Lifetime) {
         if self.defined_lifetimes.contains(l) {
             self.used_params.lifetimes.insert(l.clone());
         }
-        // Do not call visit::visit_lifetime here as it's a leaf.
     }
 
     fn visit_path(&mut self, path: &'ast syn::Path) {
@@ -206,8 +204,6 @@ impl<'ast> Visit<'ast> for GenericUsageVisitor<'_> {
         }
     }
 
-    // We need to visit expressions to catch const generics used in array sizes, etc.
-    // syn::Type can contain syn::Expr (e.g., array length).
     fn visit_expr(&mut self, ex: &'ast syn::Expr) {
         if let syn::Expr::Path(expr_path) = ex {
             if expr_path.qself.is_none() && expr_path.path.segments.len() == 1 {
@@ -215,7 +211,6 @@ impl<'ast> Visit<'ast> for GenericUsageVisitor<'_> {
                 if self.defined_const_param_idents.contains(ident) {
                     self.used_params.consts.insert(ident.clone());
                 }
-                // A type param could theoretically be used in an expr context, though rare for layout.
                 if self.defined_type_param_idents.contains(ident) {
                     self.used_params.types.insert(ident.clone());
                 }
@@ -287,17 +282,15 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
     })
 }
 
-#[allow(clippy::too_many_lines)] // Add allow attribute for function length
+#[allow(clippy::too_many_lines)]
 fn generate_header_layout_code(
     header_field_structs: &[&Field],
     input_struct_generics: &Generics,
 ) -> proc_macro2::TokenStream {
-    // Changed return type from SynResult<_>
     let layout_header_full_ident = format_ident!("layout_header_full");
     let helper_struct_name = format_ident!("PrefixLayoutHelper");
 
     if header_field_structs.is_empty() {
-        // Removed Ok() wrapper
         return quote! {
             let #layout_header_full_ident = ::std::alloc::Layout::new::<()>();
         };
@@ -368,16 +361,13 @@ fn generate_header_layout_code(
             predicates: Punctuated::new(),
         };
         for predicate in &input_where_clause.predicates {
-            // Visit the predicate to find out which generics it uses.
             let mut predicate_visitor = GenericUsageVisitor::new(
-                &defined_lifetimes, // All defined generics from original struct
+                &defined_lifetimes,
                 &defined_type_param_idents,
                 &defined_const_param_idents,
             );
             syn::visit::visit_where_predicate(&mut predicate_visitor, predicate);
 
-            // A predicate is relevant to the helper struct if ALL generic parameters
-            // it mentions are ALSO present in the helper_generics (i.e., overall_used_params).
             let is_relevant = predicate_visitor
                 .used_params
                 .lifetimes
@@ -405,13 +395,11 @@ fn generate_header_layout_code(
 
     let mut helper_fields_definitions = Vec::new();
     for field in header_field_structs {
-        // Ok to unwrap, extract_field_info ensures named fields.
         let field_ident = field.ident.as_ref().unwrap();
         let field_ty = &field.ty;
         helper_fields_definitions.push(quote_spanned!(field.span()=> #field_ident: #field_ty));
     }
 
-    // Removed Ok() wrapper
     quote_spanned! {helper_struct_name.span()=>
         #[allow(dead_code)] // Helper struct is only for layout calculation
         struct #helper_struct_name #helper_impl_generics #helper_where_clause_for_impl {
@@ -426,17 +414,14 @@ fn generate_doc_params_string(
     tail_param_name: &Ident,
     tail_param_type_str: &str,
 ) -> String {
-    // Bring std::fmt::Write into scope for the write! and writeln! macros
     use ::std::fmt::Write;
     let mut params_doc = String::new();
     for (name, ty) in header_param_names_types {
-        // writeln! macro needs `std::fmt::Write` in scope.
         let _ = writeln!(
             params_doc,
             "    - `{name}`: `{ty}` - Value for the `{name}` field."
         );
     }
-    // write! macro needs `std::fmt::Write` in scope.
     let _ = write!(
         params_doc,
         "    - `{tail_param_name}`: `{tail_param_type_str}` - The data for the tail field `{tail_param_name}`."
@@ -472,7 +457,7 @@ fn generate_build_method_for_slice(
         &format!("&[{element_type_str}]"),
     );
     let method_doc_slice = format!(
-        "Constructs a new `Box<{struct_name_ident}>` with the given header fields and tail slice data.\n\n\
+        "Creates an instance of `Box<{struct_name_ident}>`.\n\n\
          # Parameters\n\
          {doc_params_slice_str}\n\n\
          # Returns\n\n\
@@ -484,16 +469,15 @@ fn generate_build_method_for_slice(
     let build_fn_tail_processing_slice =
         quote! { let len = #tail_field_name_ident_for_access.len(); };
     let write_tail_data_call_slice = quote! {
-        if len > 0 {
-            // Get a raw pointer to the (uninitialized) tail slice data within the allocated struct.
+        // Only write if node_raw_ptr is not dangling due to ZST and len > 0
+        if final_layout.size() > 0 && len > 0 {
             let dest_slice_data_ptr = ::std::ptr::addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
-            // Copy the input slice data to the destination.
             ::std::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), dest_slice_data_ptr, len);
         }
     };
     quote! {
         #[doc = #method_doc_slice]
-        #[allow(unused_variables)] // For #offset_of_tail_payload_ident if only used in extend
+        #[allow(unused_variables)]
         #[allow(clippy::transmute_undefined_repr)]
         #method_visibility fn #build_fn_name_ident_slice(#( #build_fn_header_params, )* #tail_field_name_ident_for_access: #build_fn_tail_param_type_slice) -> Box<Self> {
             use ::std::alloc::{Layout, alloc, handle_alloc_error};
@@ -507,12 +491,28 @@ fn generate_build_method_for_slice(
             let final_layout = full_node_layout_val.pad_to_align();
 
             unsafe {
-                let mem_ptr = alloc(final_layout);
-                if mem_ptr.is_null() { handle_alloc_error(final_layout); }
+                let node_raw_ptr: *mut Self;
+                let mem_ptr: *mut u8; // Keep mem_ptr for writing header fields if ZST
 
-                let fat_pointer_components = (mem_ptr as *mut (), len);
-                let node_raw_ptr: *mut Self = mem::transmute(fat_pointer_components);
+                if final_layout.size() == 0 {
+                    // For zero-sized DSTs, create a dangling fat pointer.
+                    // The data part is the alignment, metadata (len) is 0.
+                    mem_ptr = final_layout.align() as *mut u8; // Non-null, aligned pointer
+                    let fat_pointer_components = (mem_ptr as *mut (), len); // len is 0 for empty slice/str
+                    node_raw_ptr = mem::transmute(fat_pointer_components);
+                } else {
+                    mem_ptr = alloc(final_layout);
+                    if mem_ptr.is_null() {
+                        handle_alloc_error(final_layout);
+                    }
+                    let fat_pointer_components = (mem_ptr as *mut (), len);
+                    node_raw_ptr = mem::transmute(fat_pointer_components);
+                }
 
+                // Write header fields. This is safe even for ZSTs if fields are ZSTs.
+                // If header fields are not ZSTs but the overall layout is zero (e.g. only ZST fields + empty slice),
+                // we still need to write them to the "dangling" but aligned pointer.
+                // The `ptr::addr_of_mut!((*node_raw_ptr).field)` will resolve correctly.
                 #(
                     ::std::ptr::addr_of_mut!((*node_raw_ptr).#header_field_idents_for_write)
                         .write(#header_field_idents_for_write);
@@ -559,10 +559,9 @@ fn generate_build_with_method_for_slice(
         let len = iter.len();
     };
     let write_tail_data_call_iter = quote! {
-        if len > 0 {
-            // Get a raw pointer to the (uninitialized) tail slice data within the allocated struct.
+        // Only write if node_raw_ptr is not dangling due to ZST and len > 0
+        if final_layout.size() > 0 && len > 0 {
             let dest_slice_data_ptr = ::std::ptr::addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
-            // Write elements from the iterator one by one.
             for (i, element) in iter.enumerate() {
                  unsafe { ::std::ptr::write(dest_slice_data_ptr.add(i), element); }
             }
@@ -575,7 +574,7 @@ fn generate_build_with_method_for_slice(
         &format!("impl IntoIterator<Item = {element_type_str}>"),
     );
     let method_doc_iter = format!(
-        "Constructs a new `Box<{struct_name_ident}>` with the given header fields and tail data from an exact-size iterator.\n\n\
+        "Creates an instance of `Box<{struct_name_ident}>`.\n\n\
          # Parameters\n\
          {doc_params_iter_str}\n\n\
          # Returns\n\n\
@@ -583,7 +582,7 @@ fn generate_build_with_method_for_slice(
     );
     quote! {
         #[doc = #method_doc_iter]
-        #[allow(unused_variables)] // For #offset_of_tail_payload_ident if only used in extend
+        #[allow(unused_variables)]
         #[allow(clippy::transmute_undefined_repr)]
         #method_visibility fn #build_fn_name_ident_iter<#iter_generic_param>(#( #build_fn_header_params, )* #tail_field_name_ident_for_access: #build_fn_tail_param_type_iter) -> Box<Self> #build_fn_where_clause_iter {
             use ::std::alloc::{Layout, alloc, handle_alloc_error};
@@ -597,11 +596,21 @@ fn generate_build_with_method_for_slice(
             let final_layout = full_node_layout_val.pad_to_align();
 
             unsafe {
-                let mem_ptr = alloc(final_layout);
-                if mem_ptr.is_null() { handle_alloc_error(final_layout); }
+                let node_raw_ptr: *mut Self;
+                let mem_ptr: *mut u8;
 
-                let fat_pointer_components = (mem_ptr as *mut (), len);
-                let node_raw_ptr: *mut Self = mem::transmute(fat_pointer_components);
+                if final_layout.size() == 0 {
+                    mem_ptr = final_layout.align() as *mut u8;
+                    let fat_pointer_components = (mem_ptr as *mut (), len);
+                    node_raw_ptr = mem::transmute(fat_pointer_components);
+                } else {
+                    mem_ptr = alloc(final_layout);
+                    if mem_ptr.is_null() {
+                        handle_alloc_error(final_layout);
+                    }
+                    let fat_pointer_components = (mem_ptr as *mut (), len);
+                    node_raw_ptr = mem::transmute(fat_pointer_components);
+                }
 
                 #(
                     ::std::ptr::addr_of_mut!((*node_raw_ptr).#header_field_idents_for_write)
@@ -640,14 +649,10 @@ fn generate_build_method_for_str(
         let layout_tail_payload = ::std::alloc::Layout::array::<u8>(len)
             .expect(&format!("Layout for tail str field '{}' failed", #tail_field_name_str_val_for_format));
     };
-    // MODIFIED: Get destination pointer for string data directly from the tail field of node_raw_ptr.
     let write_tail_data_call_str = quote! {
-        if len > 0 {
-            // Get a raw pointer to the (uninitialized) tail `str` data within the allocated struct.
-            // `addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access)` yields `*mut str`.
-            // Casting `*mut str` to `*mut u8` gives its data pointer.
+        // Only write if node_raw_ptr is not dangling due to ZST and len > 0
+        if final_layout.size() > 0 && len > 0 {
             let dest_str_data_ptr = ::std::ptr::addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access) as *mut u8;
-            // Copy the input string bytes to the destination.
             ::std::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), dest_str_data_ptr, len);
         }
     };
@@ -657,7 +662,7 @@ fn generate_build_method_for_str(
         "&str",
     );
     let method_doc_str = format!(
-        "Constructs a new `Box<{struct_name_ident}>` with the given header fields and tail string data.\n\n\
+        "Creates an instance of `Box<{struct_name_ident}>`.\n\n\
          # Parameters\n\
          {doc_params_str_val}\n\n\
          # Returns\n\n\
@@ -665,7 +670,7 @@ fn generate_build_method_for_str(
     );
     quote! {
         #[doc = #method_doc_str]
-        #[allow(unused_variables)] // For #offset_of_tail_payload_ident if only used in extend
+        #[allow(unused_variables)]
         #[allow(clippy::transmute_undefined_repr)]
         #method_visibility fn #build_fn_name_ident_str(#( #build_fn_header_params, )* #tail_field_name_ident_for_access: #build_fn_tail_param_type_str) -> Box<Self> {
             use ::std::alloc::{Layout, alloc, handle_alloc_error};
@@ -681,11 +686,21 @@ fn generate_build_method_for_str(
             let final_layout = full_node_layout_val.pad_to_align();
 
             unsafe {
-                let mem_ptr = alloc(final_layout);
-                if mem_ptr.is_null() { handle_alloc_error(final_layout); }
+                let node_raw_ptr: *mut Self;
+                let mem_ptr: *mut u8;
 
-                let fat_pointer_components = (mem_ptr as *mut (), len);
-                let node_raw_ptr: *mut Self = mem::transmute(fat_pointer_components);
+                if final_layout.size() == 0 {
+                    mem_ptr = final_layout.align() as *mut u8;
+                    let fat_pointer_components = (mem_ptr as *mut (), len);
+                    node_raw_ptr = mem::transmute(fat_pointer_components);
+                } else {
+                    mem_ptr = alloc(final_layout);
+                    if mem_ptr.is_null() {
+                        handle_alloc_error(final_layout);
+                    }
+                    let fat_pointer_components = (mem_ptr as *mut (), len);
+                    node_raw_ptr = mem::transmute(fat_pointer_components);
+                }
 
                 #(
                     ::std::ptr::addr_of_mut!((*node_raw_ptr).#header_field_idents_for_write)
@@ -728,16 +743,11 @@ fn make_dst_builder_impl(
     let field_info = extract_field_info(&input_struct)?;
 
     let header_layout_calc_tokens =
-        generate_header_layout_code(&field_info.header_field_structs, struct_generics); // Removed ? operator here
+        generate_header_layout_code(&field_info.header_field_structs, struct_generics);
 
     let mut generated_build_methods: Vec<proc_macro2::TokenStream> = Vec::new();
-    // This ident is for the variable that will hold the offset of the tail payload from the start of the header.
-    // It's calculated by layout_header_full.extend(layout_tail_payload).1.
-    // While its direct use for calculating the write pointer for `str` is removed,
-    // it's still essential for the `Layout::extend` call to determine the total allocation size.
     let offset_of_tail_payload_ident =
         format_ident!("offset_of_{}_payload", field_info.tail_field_name_ident);
-    // This ident is for the variable holding the Layout of the header part.
     let layout_header_full_ident = format_ident!("layout_header_full");
 
     match &field_info.tail_field.ty {
