@@ -77,8 +77,8 @@ struct DefaultBuilderNameStruct {
 #[test]
 fn test_default_builder_name() {
     let instance: Box<DefaultBuilderNameStruct> =
-        DefaultBuilderNameStruct::build(1234567890, "default_tag");
-    assert_eq!(instance.value, 1234567890);
+        DefaultBuilderNameStruct::build(1_234_567_890, "default_tag");
+    assert_eq!(instance.value, 1_234_567_890);
     assert_eq!(&instance.name_tag, "default_tag");
 }
 
@@ -118,7 +118,7 @@ struct GenericLifetimeStrStruct<'a, K: Default> {
 #[test]
 fn test_generic_lifetime_str_dst() {
     let my_key = String::from("key_data");
-    let default_key: String = Default::default();
+    let default_key: String = String::default();
     let instance: Box<GenericLifetimeStrStruct<String>> =
         GenericLifetimeStrStruct::build_generic_lifetime_str(&my_key, 77, "dynamic payload part");
     assert_eq!(*instance.key_ref, "key_data");
@@ -151,7 +151,7 @@ fn test_complex_fields_before_dst() {
         instance.tags,
         Some(vec!["tag1".to_string(), "tag2".to_string()])
     );
-    assert_eq!(&instance.raw_log, "Log entry data here");
+    assert_eq!(&instance.raw_log, "Log entry data here"); // This test fails due to a bug in the macro
 }
 
 // Test 11: Struct with a where clause
@@ -187,7 +187,7 @@ fn test_interaction_with_derives() {
         DerivedExampleStruct::build_derived(99, "derived_name");
     assert_eq!(instance.id_val, 99);
     assert_eq!(&instance.name_val, "derived_name");
-    assert!(!format!("{:?}", instance).is_empty());
+    assert!(!format!("{instance:?}").is_empty());
 }
 
 // Test 14: Empty DST slice
@@ -220,8 +220,8 @@ struct ZstSliceStruct {
 #[test]
 fn test_zst_slice_dst() {
     let zst_data_slice: &[()] = &[(), (), (), ()];
-    let instance: Box<ZstSliceStruct> = ZstSliceStruct::build_zst_slice(0xABCDEF, zst_data_slice);
-    assert_eq!(instance.metadata, 0xABCDEF);
+    let instance: Box<ZstSliceStruct> = ZstSliceStruct::build_zst_slice(0xAB_CDEF, zst_data_slice);
+    assert_eq!(instance.metadata, 0xAB_CDEF);
     assert_eq!(instance.unit_slice.len(), 4);
 }
 
@@ -267,125 +267,113 @@ fn run_macro_logic_for_test(attr_str: &str, item_str: &str) -> String {
 
 #[test]
 fn test_error_multiple_dst_fields() {
-    let item_code = r#"
+    let item_code = r"
         struct MultiDstFail {
             _field1: u32,
             ErrorTriggerMultiDst: bool,
             data1: str,
             data2: [u8],
         }
-    "#;
+    ";
     let expanded_code = run_macro_logic_for_test("", item_code);
     assert!(
         expanded_code.contains("compile_error !"),
-        "Expected compile_error in output: {}",
-        expanded_code
+        "Expected compile_error in output: {expanded_code}"
     );
     assert!(
         expanded_code.contains("Structs can only have one DST field"),
-        "Incorrect error message: {}",
-        expanded_code
+        "Incorrect error message: {expanded_code}"
     );
 }
 
 #[test]
 fn test_error_dst_field_not_last() {
-    let item_code = r#"
+    let item_code = r"
         struct DstNotLastFail {
             ErrorTriggerDstNotLast: bool,
             name: str,
             id: u32,
         }
-    "#;
+    ";
     let expanded_code = run_macro_logic_for_test("", item_code);
     assert!(
         expanded_code.contains("compile_error !"),
-        "Expected compile_error in output: {}",
-        expanded_code
+        "Expected compile_error in output: {expanded_code}"
     );
     assert!(
         expanded_code.contains("DST field must be the last field"),
-        "Incorrect error message: {}",
-        expanded_code
+        "Incorrect error message: {expanded_code}"
     );
 }
 
 #[test]
 fn test_error_macro_on_enum() {
-    let item_code = r#"
+    let item_code = r"
         enum EnumFail { ErrorTriggerNonStruct, Variant1, Variant2 }
-    "#;
+    ";
     let expanded_code = run_macro_logic_for_test("", item_code);
     assert!(
         expanded_code.contains("compile_error !"),
-        "Expected compile_error in output: {}",
-        expanded_code
+        "Expected compile_error in output: {expanded_code}"
     );
     assert!(
         expanded_code.contains("Macro can only be applied to structs"),
-        "Incorrect error message: {}",
-        expanded_code
+        "Incorrect error message: {expanded_code}"
     );
 }
 
 #[test]
 fn test_error_macro_on_function() {
-    let item_code = r#"
+    let item_code = r"
         fn function_fail() { let ErrorTriggerNonStruct = true; }
-    "#;
+    ";
     let expanded_code = run_macro_logic_for_test("", item_code);
     assert!(
         expanded_code.contains("compile_error !"),
-        "Expected compile_error in output: {}",
-        expanded_code
+        "Expected compile_error in output: {expanded_code}"
     );
     assert!(
         expanded_code.contains("Macro can only be applied to structs"),
-        "Incorrect error message: {}",
-        expanded_code
+        "Incorrect error message: {expanded_code}"
     );
 }
 
 #[test]
 fn test_error_no_dst_field() {
-    let item_code = r#"
+    let item_code = r"
         struct NoDstFail {
             ErrorTriggerNoDst: bool,
             id: i32,
             value: String,
         }
-    "#;
+    ";
     let expanded_code = run_macro_logic_for_test("", item_code);
     assert!(
         expanded_code.contains("compile_error !"),
-        "Expected compile_error in output: {}",
-        expanded_code
+        "Expected compile_error in output: {expanded_code}"
     );
     assert!(
         expanded_code.contains("No DST field found"),
-        "Incorrect error message: {}",
-        expanded_code
+        "Incorrect error message: {expanded_code}"
     );
 }
 
 #[test]
 fn test_error_invalid_macro_attribute() {
-    let item_code = r#"
+    let item_code = r"
         struct ValidStructWithDst {
             id: i32,
             data: str,
         }
-    "#;
+    ";
     let attr_code = "123_bad_attr_format ErrorTriggerInvalidAttr";
     let expanded_code = run_macro_logic_for_test(attr_code, item_code);
     assert!(
         expanded_code.contains("compile_error !"),
-        "Expected compile_error in output: {}",
-        expanded_code
+        "Expected compile_error in output: {expanded_code}"
     );
     assert!(
         expanded_code.contains("Invalid macro attribute"),
-        "Incorrect error message: {}",
-        expanded_code
+        "Incorrect error message: {expanded_code}"
     );
 }
