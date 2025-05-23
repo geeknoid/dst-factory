@@ -1,3 +1,5 @@
+#![allow(clippy::literal_string_with_formatting_args)]
+
 use proc_macro2::TokenStream;
 use std::str::FromStr;
 use tail_extend::make_dst_builder;
@@ -40,7 +42,7 @@ fn test_basic_slice_usage() {
 }
 
 // Test 3: Custom public builder name
-#[make_dst_builder(pub create_publicly)]
+#[make_dst_builder(create_publicly, pub)]
 struct PublicBuilderStruct {
     code: u16,
     message: str,
@@ -54,7 +56,7 @@ fn test_public_builder() {
 }
 
 // Test 4: Custom crate-visible builder name
-#[make_dst_builder(pub(crate) create_for_crate)]
+#[make_dst_builder(create_for_crate, pub(crate))]
 struct CrateBuilderStruct {
     level: u8,
     description: str,

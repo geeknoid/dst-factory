@@ -1,6 +1,8 @@
+//#![no_std]
+
 use tail_extend::make_dst_builder;
 
-#[make_dst_builder(pub(crate) new)]
+#[make_dst_builder(new, pub(crate))]
 struct User {
     age: u8,
     name: str,
