@@ -102,13 +102,16 @@
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
-use quote::{quote, quote_spanned};
-use std::fmt::Write;
+use quote::{format_ident, quote, quote_spanned};
+use std::collections::HashSet;
 use syn::{
-    Field, Fields, Generics, Ident, ItemStruct, Type, TypeSlice, Visibility,
+    Field, Fields, GenericParam, Generics, Ident, ItemStruct, Lifetime, Type, TypeSlice,
+    Visibility,
     parse::{Parse, ParseStream, Result as SynResult},
+    punctuated::Punctuated,
     spanned::Spanned,
-}; // For write! macro
+    visit::{self, Visit},
+};
 
 // --- Helper Struct for Macro Arguments ---
 
@@ -145,6 +148,83 @@ struct FieldInfo<'a> {
     tail_field_name_str_val: String,
 }
 
+// --- Helper for Generic Parameter Usage Analysis ---
+
+#[derive(Debug, Default)]
+struct UsedGenericParams {
+    lifetimes: HashSet<Lifetime>,
+    types: HashSet<Ident>,
+    consts: HashSet<Ident>,
+}
+
+struct GenericUsageVisitor<'a> {
+    // Parameters defined on the original struct
+    defined_lifetimes: &'a HashSet<Lifetime>,
+    defined_type_param_idents: &'a HashSet<Ident>,
+    defined_const_param_idents: &'a HashSet<Ident>,
+    // Parameters found to be used
+    used_params: UsedGenericParams,
+}
+
+impl<'a> GenericUsageVisitor<'a> {
+    fn new(
+        defined_lifetimes: &'a HashSet<Lifetime>,
+        defined_type_param_idents: &'a HashSet<Ident>,
+        defined_const_param_idents: &'a HashSet<Ident>,
+    ) -> Self {
+        Self {
+            defined_lifetimes,
+            defined_type_param_idents,
+            defined_const_param_idents,
+            used_params: UsedGenericParams::default(),
+        }
+    }
+}
+
+// Elided lifetime 'a here as suggested by clippy
+impl<'ast> Visit<'ast> for GenericUsageVisitor<'_> {
+    fn visit_lifetime(&mut self, l: &'ast Lifetime) {
+        if self.defined_lifetimes.contains(l) {
+            self.used_params.lifetimes.insert(l.clone());
+        }
+        // Do not call visit::visit_lifetime here as it's a leaf.
+    }
+
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        // Check for type or const params used as path segments
+        if path.leading_colon.is_none() && path.segments.len() == 1 {
+            let ident = &path.segments[0].ident;
+            if self.defined_type_param_idents.contains(ident) {
+                self.used_params.types.insert(ident.clone());
+            } else if self.defined_const_param_idents.contains(ident) {
+                self.used_params.consts.insert(ident.clone());
+            }
+        }
+        // Visit generic arguments within the path, like `Vec<T>`
+        for segment in &path.segments {
+            self.visit_path_arguments(&segment.arguments);
+        }
+    }
+
+    // We need to visit expressions to catch const generics used in array sizes, etc.
+    // syn::Type can contain syn::Expr (e.g., array length).
+    fn visit_expr(&mut self, ex: &'ast syn::Expr) {
+        if let syn::Expr::Path(expr_path) = ex {
+            if expr_path.qself.is_none() && expr_path.path.segments.len() == 1 {
+                let ident = &expr_path.path.segments[0].ident;
+                if self.defined_const_param_idents.contains(ident) {
+                    self.used_params.consts.insert(ident.clone());
+                }
+                // A type param could theoretically be used in an expr context, though rare for layout.
+                if self.defined_type_param_idents.contains(ident) {
+                    self.used_params.types.insert(ident.clone());
+                }
+            }
+        }
+        visit::visit_expr(self, ex); // Default traversal
+    }
+}
+
 // --- Helper Functions ---
 
 fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
@@ -161,7 +241,7 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
         Fields::Named(fields_named) => {
             if fields_named.named.is_empty() {
                 return Err(syn::Error::new_spanned(
-                    fields_named, // Pass the FieldsNamed struct itself
+                    fields_named,
                     "make_dst_builder requires at least one field (the tail field).",
                 ));
             }
@@ -191,7 +271,7 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
         }
         Fields::Unnamed(_) | Fields::Unit => {
             return Err(syn::Error::new_spanned(
-                &input_struct.fields, // Pass the Fields struct itself
+                &input_struct.fields,
                 "make_dst_builder only supports structs with named fields.",
             ));
         }
@@ -207,76 +287,138 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
     })
 }
 
+#[allow(clippy::too_many_lines)] // Add allow attribute for function length
 fn generate_header_layout_code(
     header_field_structs: &[&Field],
-    struct_name_ident: &Ident,
-) -> SynResult<proc_macro2::TokenStream> {
-    let mut layout_calculations_for_header = Vec::new();
-    let mut layout_extend_calls_for_header = Vec::new();
-    let mut header_field_layout_vars = Vec::new();
+    input_struct_generics: &Generics,
+) -> proc_macro2::TokenStream {
+    // Changed return type from SynResult<_>
+    let layout_header_full_ident = format_ident!("layout_header_full");
+    let helper_struct_name = format_ident!("PrefixLayoutHelper");
 
-    for field in header_field_structs {
-        let ident = field.ident.as_ref().ok_or_else(|| {
-            syn::Error::new(
-                field.span(),
-                "Internal error: Header field is missing an identifier during layout calculation.",
-            )
-        })?;
-        let ty = &field.ty;
-        let layout_var = Ident::new(&format!("layout_field_{ident}"), ident.span());
-        header_field_layout_vars.push(layout_var.clone());
-        layout_calculations_for_header
-            .push(quote! { let #layout_var = ::std::alloc::Layout::new::<#ty>(); });
+    if header_field_structs.is_empty() {
+        // Removed Ok() wrapper
+        return quote! {
+            let #layout_header_full_ident = ::std::alloc::Layout::new::<()>();
+        };
     }
 
-    let layout_header_full_ident = Ident::new("layout_header_full", struct_name_ident.span());
+    // 1. Collect all defined generic parameters from the input struct
+    let mut defined_lifetimes = HashSet::new();
+    let mut defined_type_param_idents = HashSet::new();
+    let mut defined_const_param_idents = HashSet::new();
 
-    if header_field_layout_vars.is_empty() {
-        layout_extend_calls_for_header
-            .push(quote! { let #layout_header_full_ident = ::std::alloc::Layout::new::<()>(); });
-    } else {
-        let first_layout_var = &header_field_layout_vars[0];
-        if header_field_layout_vars.len() == 1 {
-            layout_extend_calls_for_header
-                .push(quote! { let #layout_header_full_ident = #first_layout_var; });
-        } else {
-            let second_layout_var = &header_field_layout_vars[1];
-            let second_field_ident = header_field_structs[1].ident.as_ref().ok_or_else(|| {
-                syn::Error::new(header_field_structs[1].span(), "Internal error: Header field is missing an identifier during layout extension.")
-            })?;
-            let second_field_ident_str = second_field_ident.to_string();
-            let offset_var = Ident::new(
-                &format!("_offset_{second_field_ident}"),
-                second_field_ident.span(),
-            );
-            layout_extend_calls_for_header.push(quote! {
-                let (mut #layout_header_full_ident, #offset_var) = #first_layout_var
-                    .extend(#second_layout_var)
-                    .expect(&format!("Layout extend for field '{}' failed", #second_field_ident_str));
-            });
-            for i in 2..header_field_layout_vars.len() {
-                let current_layout_var = &header_field_layout_vars[i];
-                let current_field_ident = header_field_structs[i].ident.as_ref().ok_or_else(|| {
-                    syn::Error::new(header_field_structs[i].span(), "Internal error: Header field is missing an identifier during layout extension.")
-                })?;
-                let current_field_ident_str = current_field_ident.to_string();
-                let offset_var = Ident::new(
-                    &format!("_offset_{current_field_ident}"),
-                    current_field_ident.span(),
-                );
-                layout_extend_calls_for_header.push(quote! {
-                    let (extended_layout, #offset_var) = #layout_header_full_ident
-                        .extend(#current_layout_var)
-                        .expect(&format!("Layout extend for field '{}' failed", #current_field_ident_str));
-                    #layout_header_full_ident = extended_layout;
-                });
+    for param in &input_struct_generics.params {
+        match param {
+            GenericParam::Lifetime(lt) => {
+                defined_lifetimes.insert(lt.lifetime.clone());
+            }
+            GenericParam::Type(tp) => {
+                defined_type_param_idents.insert(tp.ident.clone());
+            }
+            GenericParam::Const(cp) => {
+                defined_const_param_idents.insert(cp.ident.clone());
             }
         }
     }
-    Ok(quote! {
-        #( #layout_calculations_for_header )*
-        #( #layout_extend_calls_for_header )*
-    })
+
+    // 2. Determine which generic parameters are used by the header fields
+    let mut overall_used_params = UsedGenericParams::default();
+    for field in header_field_structs {
+        let mut visitor = GenericUsageVisitor::new(
+            &defined_lifetimes,
+            &defined_type_param_idents,
+            &defined_const_param_idents,
+        );
+        visitor.visit_type(&field.ty);
+        overall_used_params
+            .lifetimes
+            .extend(visitor.used_params.lifetimes);
+        overall_used_params.types.extend(visitor.used_params.types);
+        overall_used_params
+            .consts
+            .extend(visitor.used_params.consts);
+    }
+
+    // 3. Construct generics for the helper struct (only used params)
+    let mut helper_generics = Generics::default();
+    for param in &input_struct_generics.params {
+        match param {
+            GenericParam::Lifetime(lt_def)
+                if overall_used_params.lifetimes.contains(&lt_def.lifetime) =>
+            {
+                helper_generics.params.push(param.clone());
+            }
+            GenericParam::Type(ty_param) if overall_used_params.types.contains(&ty_param.ident) => {
+                helper_generics.params.push(param.clone());
+            }
+            GenericParam::Const(cn_param)
+                if overall_used_params.consts.contains(&cn_param.ident) =>
+            {
+                helper_generics.params.push(param.clone());
+            }
+            _ => {} // Param not used in header
+        }
+    }
+
+    // 4. Filter the where clause for the helper struct
+    if let Some(input_where_clause) = &input_struct_generics.where_clause {
+        let mut helper_where_clause = syn::WhereClause {
+            where_token: input_where_clause.where_token,
+            predicates: Punctuated::new(),
+        };
+        for predicate in &input_where_clause.predicates {
+            // Visit the predicate to find out which generics it uses.
+            let mut predicate_visitor = GenericUsageVisitor::new(
+                &defined_lifetimes, // All defined generics from original struct
+                &defined_type_param_idents,
+                &defined_const_param_idents,
+            );
+            syn::visit::visit_where_predicate(&mut predicate_visitor, predicate);
+
+            // A predicate is relevant to the helper struct if ALL generic parameters
+            // it mentions are ALSO present in the helper_generics (i.e., overall_used_params).
+            let is_relevant = predicate_visitor
+                .used_params
+                .lifetimes
+                .is_subset(&overall_used_params.lifetimes)
+                && predicate_visitor
+                    .used_params
+                    .types
+                    .is_subset(&overall_used_params.types)
+                && predicate_visitor
+                    .used_params
+                    .consts
+                    .is_subset(&overall_used_params.consts);
+
+            if is_relevant {
+                helper_where_clause.predicates.push(predicate.clone());
+            }
+        }
+        if !helper_where_clause.predicates.is_empty() {
+            helper_generics.where_clause = Some(helper_where_clause);
+        }
+    }
+
+    let (helper_impl_generics, helper_ty_generics, helper_where_clause_for_impl) =
+        helper_generics.split_for_impl();
+
+    let mut helper_fields_definitions = Vec::new();
+    for field in header_field_structs {
+        // Ok to unwrap, extract_field_info ensures named fields.
+        let field_ident = field.ident.as_ref().unwrap();
+        let field_ty = &field.ty;
+        helper_fields_definitions.push(quote_spanned!(field.span()=> #field_ident: #field_ty));
+    }
+
+    // Removed Ok() wrapper
+    quote_spanned! {helper_struct_name.span()=>
+        #[allow(dead_code)] // Helper struct is only for layout calculation
+        struct #helper_struct_name #helper_impl_generics #helper_where_clause_for_impl {
+            #( #helper_fields_definitions ),*
+        }
+        let #layout_header_full_ident = ::std::alloc::Layout::new::<#helper_struct_name #helper_ty_generics>();
+    }
 }
 
 fn generate_doc_params_string(
@@ -284,13 +426,17 @@ fn generate_doc_params_string(
     tail_param_name: &Ident,
     tail_param_type_str: &str,
 ) -> String {
+    // Bring std::fmt::Write into scope for the write! and writeln! macros
+    use ::std::fmt::Write;
     let mut params_doc = String::new();
     for (name, ty) in header_param_names_types {
+        // writeln! macro needs `std::fmt::Write` in scope.
         let _ = writeln!(
             params_doc,
             "    - `{name}`: `{ty}` - Value for the `{name}` field."
         );
     }
+    // write! macro needs `std::fmt::Write` in scope.
     let _ = write!(
         params_doc,
         "    - `{tail_param_name}`: `{tail_param_type_str}` - The data for the tail field `{tail_param_name}`."
@@ -339,13 +485,15 @@ fn generate_build_method_for_slice(
         quote! { let len = #tail_field_name_ident_for_access.len(); };
     let write_tail_data_call_slice = quote! {
         if len > 0 {
-            let data_slice_elements_ptr = (*node_raw_ptr).#tail_field_name_ident_for_access.as_mut_ptr();
-            ::std::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), data_slice_elements_ptr, len);
+            // Get a raw pointer to the (uninitialized) tail slice data within the allocated struct.
+            let dest_slice_data_ptr = ::std::ptr::addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
+            // Copy the input slice data to the destination.
+            ::std::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), dest_slice_data_ptr, len);
         }
     };
     quote! {
         #[doc = #method_doc_slice]
-        #[allow(unused_variables)]
+        #[allow(unused_variables)] // For #offset_of_tail_payload_ident if only used in extend
         #[allow(clippy::transmute_undefined_repr)]
         #method_visibility fn #build_fn_name_ident_slice(#( #build_fn_header_params, )* #tail_field_name_ident_for_access: #build_fn_tail_param_type_slice) -> Box<Self> {
             use ::std::alloc::{Layout, alloc, handle_alloc_error};
@@ -357,16 +505,21 @@ fn generate_build_method_for_slice(
                 .extend(layout_tail_payload)
                 .expect(&format!("Layout extend for tail data of '{}' failed", #tail_field_name_str_val_for_format));
             let final_layout = full_node_layout_val.pad_to_align();
+
             unsafe {
                 let mem_ptr = alloc(final_layout);
                 if mem_ptr.is_null() { handle_alloc_error(final_layout); }
+
                 let fat_pointer_components = (mem_ptr as *mut (), len);
                 let node_raw_ptr: *mut Self = mem::transmute(fat_pointer_components);
+
                 #(
                     ::std::ptr::addr_of_mut!((*node_raw_ptr).#header_field_idents_for_write)
                         .write(#header_field_idents_for_write);
                 )*
+
                 #write_tail_data_call_slice
+
                 Box::from_raw(node_raw_ptr)
             }
         }
@@ -394,9 +547,8 @@ fn generate_build_with_method_for_slice(
             .expect(&format!("Layout for tail slice field '{}' failed", #tail_field_name_str_val_for_format));
     };
 
-    let build_fn_name_ident_iter =
-        Ident::new(&format!("{base_method_name}_with"), base_method_name.span());
-    let iter_generic_param = Ident::new("I", field_info.tail_field_name_ident.span());
+    let build_fn_name_ident_iter = format_ident!("{}_with", base_method_name);
+    let iter_generic_param = format_ident!("I");
     let build_fn_tail_param_type_iter = quote! { #iter_generic_param };
     let build_fn_where_clause_iter = quote! {
         where #iter_generic_param: ::std::iter::IntoIterator<Item = #element_type>,
@@ -408,9 +560,11 @@ fn generate_build_with_method_for_slice(
     };
     let write_tail_data_call_iter = quote! {
         if len > 0 {
-            let data_slice_elements_ptr = (*node_raw_ptr).#tail_field_name_ident_for_access.as_mut_ptr();
+            // Get a raw pointer to the (uninitialized) tail slice data within the allocated struct.
+            let dest_slice_data_ptr = ::std::ptr::addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
+            // Write elements from the iterator one by one.
             for (i, element) in iter.enumerate() {
-                 unsafe { ::std::ptr::write(data_slice_elements_ptr.add(i), element); }
+                 unsafe { ::std::ptr::write(dest_slice_data_ptr.add(i), element); }
             }
         }
     };
@@ -429,7 +583,7 @@ fn generate_build_with_method_for_slice(
     );
     quote! {
         #[doc = #method_doc_iter]
-        #[allow(unused_variables)]
+        #[allow(unused_variables)] // For #offset_of_tail_payload_ident if only used in extend
         #[allow(clippy::transmute_undefined_repr)]
         #method_visibility fn #build_fn_name_ident_iter<#iter_generic_param>(#( #build_fn_header_params, )* #tail_field_name_ident_for_access: #build_fn_tail_param_type_iter) -> Box<Self> #build_fn_where_clause_iter {
             use ::std::alloc::{Layout, alloc, handle_alloc_error};
@@ -441,16 +595,21 @@ fn generate_build_with_method_for_slice(
                 .extend(layout_tail_payload)
                 .expect(&format!("Layout extend for tail data of '{}' failed", #tail_field_name_str_val_for_format));
             let final_layout = full_node_layout_val.pad_to_align();
+
             unsafe {
                 let mem_ptr = alloc(final_layout);
                 if mem_ptr.is_null() { handle_alloc_error(final_layout); }
+
                 let fat_pointer_components = (mem_ptr as *mut (), len);
                 let node_raw_ptr: *mut Self = mem::transmute(fat_pointer_components);
+
                 #(
                     ::std::ptr::addr_of_mut!((*node_raw_ptr).#header_field_idents_for_write)
                         .write(#header_field_idents_for_write);
                 )*
+
                 #write_tail_data_call_iter
+
                 Box::from_raw(node_raw_ptr)
             }
         }
@@ -481,10 +640,15 @@ fn generate_build_method_for_str(
         let layout_tail_payload = ::std::alloc::Layout::array::<u8>(len)
             .expect(&format!("Layout for tail str field '{}' failed", #tail_field_name_str_val_for_format));
     };
+    // MODIFIED: Get destination pointer for string data directly from the tail field of node_raw_ptr.
     let write_tail_data_call_str = quote! {
         if len > 0 {
-            let dest_ptr_for_str_bytes = mem_ptr.add(#offset_of_tail_payload_ident);
-            ::std::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), dest_ptr_for_str_bytes, len);
+            // Get a raw pointer to the (uninitialized) tail `str` data within the allocated struct.
+            // `addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access)` yields `*mut str`.
+            // Casting `*mut str` to `*mut u8` gives its data pointer.
+            let dest_str_data_ptr = ::std::ptr::addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access) as *mut u8;
+            // Copy the input string bytes to the destination.
+            ::std::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), dest_str_data_ptr, len);
         }
     };
     let doc_params_str_val = generate_doc_params_string(
@@ -501,28 +665,35 @@ fn generate_build_method_for_str(
     );
     quote! {
         #[doc = #method_doc_str]
-        #[allow(unused_variables)]
+        #[allow(unused_variables)] // For #offset_of_tail_payload_ident if only used in extend
         #[allow(clippy::transmute_undefined_repr)]
         #method_visibility fn #build_fn_name_ident_str(#( #build_fn_header_params, )* #tail_field_name_ident_for_access: #build_fn_tail_param_type_str) -> Box<Self> {
             use ::std::alloc::{Layout, alloc, handle_alloc_error};
             use ::std::{mem, ptr};
+
             #build_fn_tail_processing_str
             #header_layout_calc_tokens
             #layout_calculation_for_tail_payload_str
+
             let (full_node_layout_val, #offset_of_tail_payload_ident) = #layout_header_full_ident
                 .extend(layout_tail_payload)
                 .expect(&format!("Layout extend for tail data of '{}' failed", #tail_field_name_str_val_for_format));
             let final_layout = full_node_layout_val.pad_to_align();
+
             unsafe {
                 let mem_ptr = alloc(final_layout);
                 if mem_ptr.is_null() { handle_alloc_error(final_layout); }
+
                 let fat_pointer_components = (mem_ptr as *mut (), len);
                 let node_raw_ptr: *mut Self = mem::transmute(fat_pointer_components);
+
                 #(
                     ::std::ptr::addr_of_mut!((*node_raw_ptr).#header_field_idents_for_write)
                         .write(#header_field_idents_for_write);
                 )*
+
                 #write_tail_data_call_str
+
                 Box::from_raw(node_raw_ptr)
             }
         }
@@ -543,7 +714,7 @@ fn make_dst_builder_impl(
     let builder_args = if attr_args_ts.is_empty() {
         MakeDstBuilderArgs {
             visibility: Visibility::Inherited,
-            base_method_name: Ident::new("build", proc_macro2::Span::call_site()),
+            base_method_name: format_ident!("build"),
         }
     } else {
         syn::parse2(attr_args_ts)?
@@ -557,14 +728,17 @@ fn make_dst_builder_impl(
     let field_info = extract_field_info(&input_struct)?;
 
     let header_layout_calc_tokens =
-        generate_header_layout_code(&field_info.header_field_structs, struct_name_ident)?;
+        generate_header_layout_code(&field_info.header_field_structs, struct_generics); // Removed ? operator here
 
     let mut generated_build_methods: Vec<proc_macro2::TokenStream> = Vec::new();
-    let offset_of_tail_payload_ident = Ident::new(
-        &format!("offset_of_{}_payload", field_info.tail_field_name_ident),
-        field_info.tail_field_name_ident.span(),
-    );
-    let layout_header_full_ident = Ident::new("layout_header_full", struct_name_ident.span());
+    // This ident is for the variable that will hold the offset of the tail payload from the start of the header.
+    // It's calculated by layout_header_full.extend(layout_tail_payload).1.
+    // While its direct use for calculating the write pointer for `str` is removed,
+    // it's still essential for the `Layout::extend` call to determine the total allocation size.
+    let offset_of_tail_payload_ident =
+        format_ident!("offset_of_{}_payload", field_info.tail_field_name_ident);
+    // This ident is for the variable holding the Layout of the header part.
+    let layout_header_full_ident = format_ident!("layout_header_full");
 
     match &field_info.tail_field.ty {
         Type::Slice(TypeSlice { elem, .. }) => {
