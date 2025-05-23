@@ -155,7 +155,7 @@ fn test_complex_fields_before_dst() {
 }
 
 // Test 11: Struct with a where clause
-#[make_dst_builder(build_with_where_clause)]
+#[make_dst_builder(build_from_iter_where_clause)]
 struct WhereClauseStruct<T>
 where
     T: Copy + Default + PartialEq + std::fmt::Debug,
@@ -165,10 +165,10 @@ where
 }
 
 #[test]
-fn test_struct_with_where_clause() {
+fn test_struct_from_iter_where_clause() {
     let u8_items: &[u8] = &[11, 22, 33];
     let instance: Box<WhereClauseStruct<u8>> =
-        WhereClauseStruct::build_with_where_clause(5u8, u8_items);
+        WhereClauseStruct::build_from_iter_where_clause(5u8, u8_items);
     assert_eq!(instance.fixed_item, 5u8);
     assert_eq!(&instance.variable_items, u8_items);
 }
@@ -182,7 +182,7 @@ struct DerivedExampleStruct {
 }
 
 #[test]
-fn test_interaction_with_derives() {
+fn test_interaction_from_iter_derives() {
     let instance: Box<DerivedExampleStruct> =
         DerivedExampleStruct::build_derived(99, "derived_name");
     assert_eq!(instance.id_val, 99);

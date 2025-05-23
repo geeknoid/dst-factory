@@ -1,103 +1,205 @@
-//! # Make DST Builder Macro
+//! # `tail-extend`: Build `Box<DST>` with Ease
 //!
-//! This crate provides the `#[make_dst_builder]` procedural attribute macro.
-//! When applied to a struct definition that is a Dynamically Sized Type (DST)
-//! (i.e., its last field is a slice `[T]` or `str`), this macro generates
-//! an `impl` block for that struct with methods to construct `Box<Self>` instances.
+//! This crate provides the `#[make_dst_builder]` procedural attribute macro
+//! for Rust structs. When applied to a struct definition that is a Dynamically
+//! Sized Type (DST) – meaning its last field is a slice `[T]` or `str` –
+//! this macro automatically generates an `impl` block. This block contains
+//! constructor methods to easily and safely create `Box<Self>` instances
+//! of the DST.
 //!
-//! ## Macro: `#[make_dst_builder]`
+//! The primary goal of `#[make_dst_builder]` is to abstract away the manual and
+//! error-prone complexities of memory layout calculations and unsafe pointer
+//! operations typically required for initializing DSTs where the size of the
+//! final field is determined at runtime.
 //!
-//! ### Functionality
+//! ## Usage
 //!
-//! Applying `#[make_dst_builder]` to a DST struct:
+//! Apply the `#[make_dst_builder]` attribute directly above your struct definition.
+//! You can customize the visibility and base name of the generated constructor methods.
 //!
-//! 1.  **Preserves the Struct Definition**: The original struct definition is emitted as-is.
-//! 2.  **Generates an `impl` Block**: This block contains builder methods.
-//!     * The parameters of these methods correspond directly to the fields of the struct.
+//! ### Syntax
 //!
-//! ### Attribute Arguments (Optional)
+//! The attribute supports the following forms:
 //!
-//! `#[make_dst_builder([visibility] [base_method_name])]`
+//! 1.  **Default (private `build` method):**
+//!     ```rust
+//!     # use tail_extend::make_dst_builder;
+//!     #[make_dst_builder]
+//!     # struct MyStruct { field: u32, data: [u8] }
+//!     ```
+//!     Generates `fn build(...) -> Box<Self>`.
 //!
-//! - `[visibility]`: An optional visibility specifier for the generated methods (e.g., `pub`, `pub(crate)`).
-//!   If omitted, methods are private to the `impl` block.
-//! - `[base_method_name]`: An optional identifier to use as the base name for the generated methods.
-//!   If omitted, "build" is used as the base name.
+//! 2.  **Custom method name (private):**
+//!     ```rust
+//!     # use tail_extend::make_dst_builder;
+//!     #[make_dst_builder(create)]
+//!     # struct MyStruct { field: u32, data: [u8] }
+//!     ```
+//!     Generates `fn create(...) -> Box<Self>`.
 //!
-//! ### Generated Methods
+//! 3.  **Public visibility (default `build` method name):**
+//!     ```rust
+//!     # use tail_extend::make_dst_builder;
+//!     #[make_dst_builder(pub)]
+//!     # struct MyStruct { field: u32, data: [u8] }
+//!     ```
+//!     Generates `pub fn build(...) -> Box<Self>`.
 //!
-//! Based on the optional `base_method_name` (defaulting to "build"):
+//! 4.  **Public visibility and custom method name:**
+//!     ```rust
+//!     # use tail_extend::make_dst_builder;
+//!     #[make_dst_builder(pub new)]
+//!     # struct MyStruct { field: u32, data: [u8] }
+//!     ```
+//!     Generates `pub fn new(...) -> Box<Self>`.
 //!
-//! -   **If the last field is `[T]` (a slice type):**
-//!     * `fn <base_method_name>(field1: Type1, ..., last_field_name: &[T]) -> Box<Self>`
-//!     * `fn <base_method_name>_with<I>(field1: Type1, ..., last_field_name: I) -> Box<Self>`
-//!       `where I: IntoIterator<Item = T>, <I as IntoIterator>::IntoIter: ExactSizeIterator`
-//! -   **If the last field is `str`:**
-//!     * `fn <base_method_name>(field1: Type1, ..., last_field_name: &str) -> Box<Self>`
+//! You can use other visibilities like `pub(crate)` as well.
 //!
-//! All generated methods will have the specified `[visibility]` (or default private visibility).
+//! ## Generated Methods
 //!
-//! ### Generics
+//! Based on the type of the last field (the "tail" field), the macro generates
+//! one or two constructor methods. Let `<base_method_name>` be the name you
+//! specified (or `build` by default), and `HeaderFieldType1, HeaderFieldType2, ...`
+//! be the types of the fields preceding the tail field.
 //!
-//! Generic parameters and `where` clauses from the struct definition are correctly
-//! propagated to the generated `impl` block and the method signatures.
+//! ### For `tail: [T]` (slice tail)
 //!
-//! ### Errors
+//! 1.  **From a slice:**
+//!     ```rust
+//!     # use tail_extend::make_dst_builder;
+//!     # #[make_dst_builder(pub example_build)]
+//!     # struct ExampleSlice<G> { id: u32, generic_field: G, data: [u8] }
+//!     # fn signature_example<G>(id: u32, generic_field: G, data: &[u8]) -> Box<ExampleSlice<G>> {
+//!     // Signature:
+//!     // pub fn <base_method_name>(
+//!     //     header_field1: HeaderFieldType1,
+//!     //     header_field2: HeaderFieldType2,
+//!     //     ...,
+//!     //     tail_data: &[T]
+//!     // ) -> Box<Self>;
+//!     # todo!()
+//!     # }
+//!     ```
 //!
-//! This macro will cause a compile-time error if:
-//! - The input item is not a struct with named fields.
-//! - The struct has no fields (a tail field is required).
-//! - The last field of the struct is not a slice `[T]` or `str`.
-//! - The arguments to `#[make_dst_builder(...)]` are malformed.
+//! 2.  **From an iterator (ExactSizeIterator):**
+//!     A `<base_method_name>_from_iter` method is also generated.
+//!     ```rust
+//!     # use tail_extend::make_dst_builder;
+//!     # #[make_dst_builder(pub example_build)]
+//!     # struct ExampleSliceIter<G> { id: u32, generic_field: G, data: [u8] }
+//!     # fn signature_example_from_iter<G, I>(id: u32, generic_field: G, data_iter: I) -> Box<ExampleSliceIter<G>>
+//!     # where I: IntoIterator<Item = u8>, <I as IntoIterator>::IntoIter: ExactSizeIterator
+//!     # {
+//!     // Signature:
+//!     // pub fn <base_method_name>_from_iter<IterType>(
+//!     //     header_field1: HeaderFieldType1,
+//!     //     header_field2: HeaderFieldType2,
+//!     //     ...,
+//!     //     tail_data_iter: IterType
+//!     // ) -> Box<Self>
+//!     // where
+//!     //     IterType: IntoIterator<Item = T>,
+//!     //     <IterType as IntoIterator>::IntoIter: ExactSizeIterator;
+//!     # todo!()
+//!     # }
+//!     ```
 //!
-//! ### Example
+//! ### For `tail: str` (string slice tail)
+//!
+//! 1.  **From a string slice:**
+//!     ```rust
+//!     # use tail_extend::make_dst_builder;
+//!     # #[make_dst_builder(pub example_build_str)]
+//!     # struct ExampleStr { name: String, description: str }
+//!     # fn signature_example_str(name: String, description: &str) -> Box<ExampleStr> {
+//!     // Signature:
+//!     // pub fn <base_method_name>(
+//!     //     header_field1: HeaderFieldType1,
+//!     //     header_field2: HeaderFieldType2,
+//!     //     ...,
+//!     //     tail_data: &str
+//!     // ) -> Box<Self>;
+//!     # todo!()
+//!     # }
+//!     ```
+//!
+//! ## Example
+//!
+//! Here's a comprehensive example demonstrating generics, lifetimes, and different
+//! tail types:
 //!
 //! ```rust
-//! // In a real scenario, you'd import from your macro crate:
-//! // use your_dst_builder_crate::make_dst_builder;
-//! # use dst_builder_macro::make_dst_builder; // For doctest
+//! use tail_extend::make_dst_builder;
+//! use std::fmt::Debug;
 //!
-//! #[make_dst_builder(pub new)] // Methods will be `pub fn new(...)` and `pub fn new_with(...)`
-//! #[derive(Debug, PartialEq)]
-//! pub struct MyPacket<'a, T: Copy>
-//! where
-//!     T: std::fmt::Debug + PartialEq,
-//! {
-//!     id: u32,
-//!     marker: T,
-//!     config: &'a str,
-//!     pub data: [u8], // The tail field
+//! // Struct with a slice tail and generics
+//! #[make_dst_builder(pub create_packet)]
+//! #[derive(Debug, PartialEq)] // For easy testing
+//! pub struct DataPacket<'a, IdType: Copy + Debug + PartialEq> { // Renamed ID_TYPE to IdType
+//!     packet_id: IdType,
+//!     source_ip: &'a str,
+//!     is_urgent: bool,
+//!     payload: [u8], // The dynamically sized tail field
 //! }
 //!
-//! #[make_dst_builder] // Methods will be `fn build(...)` (private)
+//! // Struct with a str tail
+//! #[make_dst_builder(create_log)] // Private method
 //! #[derive(Debug, PartialEq)]
-//! pub struct LogMessage {
+//! pub struct LogEntry {
 //!     timestamp: u64,
-//!     message: str, // String tail
+//!     level: String,
+//!     message: str, // The dynamically sized tail field
 //! }
 //!
-//! # fn main() {
-//! #   let packet = MyPacket::new(123, 0.5f32, "test_cfg", &[1,2,3]);
-//! #   assert_eq!(packet.id, 123);
-//! #   assert_eq!(packet.marker, 0.5f32);
-//! #   assert_eq!(packet.config, "test_cfg");
-//! #   assert_eq!(packet.data, [1,2,3]);
-//! #
-//! #   let packet2 = MyPacket::new_with(456, 0.25f32, "another_cfg", vec![4,5]);
-//! #   assert_eq!(packet2.id, 456);
-//! #   assert_eq!(packet2.data, [4,5]);
-//! #
-//! #   // LogMessage::build would be private, so not directly callable in this doctest scope
-//! #   // unless it was in the same module and the test was an inner function.
-//! #   // For demonstration, we'll assume it works as intended.
-//! #   // let log = LogMessage::build(1678886400, "Hello DST!");
-//! #   // assert_eq!(log.timestamp, 1678886400);
-//! #   // assert_eq!(log.message, "Hello DST!");
-//! # }
+//! // --- DataPacket Example ---
+//! let packet1_payload = vec![0xDE, 0xAD, 0xBE, 0xEF];
+//! let packet1 = DataPacket::create_packet(
+//!     1001_u32,      // packet_id
+//!     "192.168.1.1", // source_ip
+//!     true,          // is_urgent
+//!     &packet1_payload, // payload (slice)
+//! );
+//!
+//! assert_eq!(packet1.packet_id, 1001_u32);
+//! assert_eq!(packet1.source_ip, "192.168.1.1");
+//! assert!(packet1.is_urgent);
+//! assert_eq!(packet1.payload, [0xDE, 0xAD, 0xBE, 0xEF]);
+//! println!("Packet 1: {:?}", packet1);
+//!
+//! // Using the _from_iter method for DataPacket (iterator)
+//! let packet2_payload_iter = vec![0xFF, 0xEE, 0xDD];
+//! let packet2 = DataPacket::create_packet_from_iter(
+//!     2002_u16,      // packet_id (different generic type)
+//!     "10.0.0.5",    // source_ip
+//!     false,         // is_urgent
+//!     packet2_payload_iter, // payload (iterator)
+//! );
+//! assert_eq!(packet2.packet_id, 2002_u16);
+//! assert_eq!(packet2.payload, [0xFF, 0xEE, 0xDD]);
+//! println!("Packet 2 (from iter): {:?}", packet2);
+//!
+//! // --- LogEntry Example ---
+//! let log1 = LogEntry::create_log(
+//!     1678886400,
+//!     "INFO".to_string(),
+//!     "System startup complete.",
+//! );
+//!
+//! assert_eq!(log1.timestamp, 1678886400);
+//! assert_eq!(log1.level, "INFO");
+//! assert_eq!(&log1.message, "System startup complete."); // Compare &log1.message with &str
+//! println!("Log 1: {:?}", log1);
 //! ```
 //!
-//! This macro uses `unsafe` code for memory management. Ensure thorough understanding
-//! of the implications.
+//! ## Error Conditions
+//!
+//! The `#[make_dst_builder]` macro produces a compile-time error if:
+//!
+//! - It's applied to anything other than a struct with named fields.
+//! - The struct has no fields (a tail field is essential for a DST).
+//! - The last field of the struct is not a slice (`[T]`) or a string slice (`str`).
+//! - The arguments provided to the `#[make_dst_builder(...)]` attribute are malformed
+//!   (e.g., incorrect visibility keyword, too many arguments).
 
 extern crate proc_macro;
 
@@ -105,7 +207,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
 use std::collections::HashSet;
 use syn::{
-    Field, Fields, GenericParam, Generics, Ident, ItemStruct, Lifetime, Type, TypeSlice,
+    Field, Fields, GenericParam, Generics, Ident, ItemStruct, Lifetime, Type, TypePath, TypeSlice,
     Visibility,
     parse::{Parse, ParseStream, Result as SynResult},
     punctuated::Punctuated,
@@ -130,6 +232,10 @@ impl Parse for MakeDstBuilderArgs {
             input.parse()?
         };
 
+        if !input.is_empty() {
+            return Err(input.error("Expected end of input, found additional tokens"));
+        }
+
         Ok(Self {
             visibility,
             base_method_name,
@@ -142,14 +248,70 @@ struct FieldInfo<'a> {
     header_field_structs: Vec<&'a Field>,
     header_field_idents: Vec<&'a Ident>,
     build_fn_header_params: Vec<proc_macro2::TokenStream>,
-    header_param_names_types_for_docs: Vec<(String, String)>,
     tail_field: &'a Field,
     tail_field_name_ident: &'a Ident,
     tail_field_name_str_val: String,
 }
 
-// --- Helper for Generic Parameter Usage Analysis ---
+// --- Helper Struct for Common Build Method Parameters ---
+struct CommonBuildParams<'a> {
+    method_name_ident: &'a Ident,
+    build_fn_tail_param_tokens: &'a proc_macro2::TokenStream,
+    build_fn_generics_tokens: Option<&'a proc_macro2::TokenStream>,
+    build_fn_where_clause_tokens: Option<&'a proc_macro2::TokenStream>,
+    build_fn_tail_processing_tokens: &'a proc_macro2::TokenStream,
+    layout_calculation_for_tail_payload_tokens: &'a proc_macro2::TokenStream,
+    write_tail_data_call_tokens: &'a proc_macro2::TokenStream,
+    create_node_raw_ptr_for_non_zst_tokens: &'a proc_macro2::TokenStream,
+    create_zst_node_raw_ptr_tokens: &'a proc_macro2::TokenStream,
+    method_doc_string: &'a str,
+}
 
+// --- Helper for array/slice layout calculations ---
+fn create_array_layout_calculation<T: quote::ToTokens>(
+    element_type: &T,
+    tail_field_name_str_val: &str,
+    span: proc_macro2::Span,
+) -> proc_macro2::TokenStream {
+    quote_spanned! {span=>
+        let layout_tail_payload = ::std::alloc::Layout::array::<#element_type>(len)
+            .expect(&format!("Overflow in memory layout calculation for {}", #tail_field_name_str_val));
+    }
+}
+
+// --- Helper for creating raw node pointers for slices ---
+fn create_slice_raw_ptr_tokens<T: quote::ToTokens>(
+    element_type: &T,
+) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+    let non_zst = quote! {
+        ::std::ptr::slice_from_raw_parts_mut(mem_ptr as *mut #element_type, len) as *mut Self
+    };
+
+    let zst = quote! {
+        let data_ptr = ::std::ptr::NonNull::<#element_type>::dangling().as_ptr();
+        ::std::ptr::slice_from_raw_parts_mut(data_ptr, len) as *mut Self
+    };
+
+    (non_zst, zst)
+}
+
+// --- Helper for creating raw node pointers for string slices ---
+fn create_str_raw_ptr_tokens() -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+    let non_zst = quote! {
+        let fat_pointer_components = (mem_ptr as *mut (), len);
+        ::std::mem::transmute(fat_pointer_components)
+    };
+
+    let zst = quote! {
+        let data_ptr = ::std::ptr::NonNull::<u8>::dangling().as_ptr();
+        let fat_pointer_components = (data_ptr as *mut (), len);
+        ::std::mem::transmute(fat_pointer_components)
+    };
+
+    (non_zst, zst)
+}
+
+// --- Helper for Generic Parameter Usage Analysis ---
 #[derive(Debug, Default)]
 struct UsedGenericParams {
     lifetimes: HashSet<Lifetime>,
@@ -182,6 +344,21 @@ impl<'a> GenericUsageVisitor<'a> {
 }
 
 impl<'ast> Visit<'ast> for GenericUsageVisitor<'_> {
+    fn visit_expr(&mut self, ex: &'ast syn::Expr) {
+        if let syn::Expr::Path(expr_path) = ex {
+            if expr_path.qself.is_none() && expr_path.path.segments.len() == 1 {
+                let ident = &expr_path.path.segments[0].ident;
+                if self.defined_const_param_idents.contains(ident) {
+                    self.used_params.consts.insert(ident.clone());
+                }
+                if self.defined_type_param_idents.contains(ident) {
+                    self.used_params.types.insert(ident.clone());
+                }
+            }
+        }
+        visit::visit_expr(self, ex); // Default traversal
+    }
+
     fn visit_lifetime(&mut self, l: &'ast Lifetime) {
         if self.defined_lifetimes.contains(l) {
             self.used_params.lifetimes.insert(l.clone());
@@ -203,21 +380,6 @@ impl<'ast> Visit<'ast> for GenericUsageVisitor<'_> {
             self.visit_path_arguments(&segment.arguments);
         }
     }
-
-    fn visit_expr(&mut self, ex: &'ast syn::Expr) {
-        if let syn::Expr::Path(expr_path) = ex {
-            if expr_path.qself.is_none() && expr_path.path.segments.len() == 1 {
-                let ident = &expr_path.path.segments[0].ident;
-                if self.defined_const_param_idents.contains(ident) {
-                    self.used_params.consts.insert(ident.clone());
-                }
-                if self.defined_type_param_idents.contains(ident) {
-                    self.used_params.types.insert(ident.clone());
-                }
-            }
-        }
-        visit::visit_expr(self, ex); // Default traversal
-    }
 }
 
 // --- Helper Functions ---
@@ -226,7 +388,6 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
     let mut header_field_structs: Vec<&Field> = Vec::new();
     let mut header_field_idents: Vec<&Ident> = Vec::new();
     let mut build_fn_header_params: Vec<proc_macro2::TokenStream> = Vec::new();
-    let mut header_param_names_types_for_docs: Vec<(String, String)> = Vec::new();
 
     let tail_field: &Field;
     let tail_field_name_ident: &Ident;
@@ -237,9 +398,33 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
             if fields_named.named.is_empty() {
                 return Err(syn::Error::new_spanned(
                     fields_named,
-                    "make_dst_builder requires at least one field (the tail field).",
+                    "Struct must have at least one field",
                 ));
             }
+
+            // Split fields into header fields (all but last) and the tail field (last)
+            let mut fields_iter = fields_named.named.iter();
+            let last_field = fields_iter.next_back().unwrap(); // Safe because we checked for emptiness above
+
+            // Verify the last field is a DST with unsized type [T] or str
+            let is_dst = match &last_field.ty {
+                Type::Slice(_) => true,
+                Type::Path(type_path) if type_path.path.is_ident("str") => true,
+                Type::Path(TypePath { path, .. })
+                    if path.segments.last().is_some_and(|seg| seg.ident == "str") =>
+                {
+                    true
+                }
+                _ => false,
+            };
+
+            if !is_dst {
+                return Err(syn::Error::new_spanned(
+                    &last_field.ty,
+                    "Last field must be a dynamically sized type like [T] or str",
+                ));
+            }
+
             let num_fields = fields_named.named.len();
             for (i, field) in fields_named.named.iter().enumerate() {
                 if i < num_fields - 1 {
@@ -253,21 +438,16 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
                     header_field_idents.push(field_ident);
                     let field_ty = &field.ty;
                     build_fn_header_params.push(quote! { #field_ident: #field_ty });
-                    header_param_names_types_for_docs
-                        .push((field_ident.to_string(), quote! {#field_ty}.to_string()));
                 }
             }
             tail_field = fields_named.named.last().unwrap();
-            tail_field_name_ident = tail_field
-                .ident
-                .as_ref()
-                .ok_or_else(|| syn::Error::new(tail_field.span(), "Tail field must be named."))?;
+            tail_field_name_ident = tail_field.ident.as_ref().unwrap();
             tail_field_name_str_val = tail_field_name_ident.to_string();
         }
         Fields::Unnamed(_) | Fields::Unit => {
             return Err(syn::Error::new_spanned(
                 &input_struct.fields,
-                "make_dst_builder only supports structs with named fields.",
+                "Structs with unnamed fields are not supported",
             ));
         }
     }
@@ -275,14 +455,13 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
         header_field_structs,
         header_field_idents,
         build_fn_header_params,
-        header_param_names_types_for_docs,
         tail_field,
         tail_field_name_ident,
         tail_field_name_str_val,
     })
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn generate_header_layout_code(
     header_field_structs: &[&Field],
     input_struct_generics: &Generics,
@@ -401,7 +580,7 @@ fn generate_header_layout_code(
     }
 
     quote_spanned! {helper_struct_name.span()=>
-        #[allow(dead_code)] // Helper struct is only for layout calculation
+        #[allow(dead_code)]
         struct #helper_struct_name #helper_impl_generics #helper_where_clause_for_impl {
             #( #helper_fields_definitions ),*
         }
@@ -409,24 +588,78 @@ fn generate_header_layout_code(
     }
 }
 
-fn generate_doc_params_string(
-    header_param_names_types: &[(String, String)],
-    tail_param_name: &Ident,
-    tail_param_type_str: &str,
-) -> String {
-    use ::std::fmt::Write;
-    let mut params_doc = String::new();
-    for (name, ty) in header_param_names_types {
-        let _ = writeln!(
-            params_doc,
-            "    - `{name}`: `{ty}` - Value for the `{name}` field."
-        );
+// --- Unified Build Method Generation ---
+
+fn generate_common_build_method(
+    builder_args: &MakeDstBuilderArgs,
+    field_info: &FieldInfo,
+    header_layout_calc_tokens: &proc_macro2::TokenStream,
+    offset_of_tail_payload_ident: &Ident,
+    layout_header_full_ident: &Ident,
+    common_params: &CommonBuildParams,
+) -> proc_macro2::TokenStream {
+    let method_visibility = &builder_args.visibility;
+    let tail_field_name_str_val_for_format = &field_info.tail_field_name_str_val;
+    let build_fn_header_params = &field_info.build_fn_header_params;
+    let header_field_idents_for_write = &field_info.header_field_idents;
+
+    // Destructure common_params for easier use in quote!
+    let CommonBuildParams {
+        method_name_ident,
+        build_fn_tail_param_tokens,
+        build_fn_generics_tokens,
+        build_fn_where_clause_tokens,
+        build_fn_tail_processing_tokens,
+        layout_calculation_for_tail_payload_tokens,
+        write_tail_data_call_tokens,
+        create_node_raw_ptr_for_non_zst_tokens,
+        create_zst_node_raw_ptr_tokens,
+        method_doc_string,
+    } = common_params;
+
+    quote! {
+        #[doc = #method_doc_string]
+        #[allow(unused_variables)] // For len, iter etc. if not used by all paths
+        #[expect(clippy::transmute_undefined_repr)] // For the transmutes
+        #method_visibility fn #method_name_ident #build_fn_generics_tokens (
+            #( #build_fn_header_params, )*
+            #build_fn_tail_param_tokens
+        ) -> Box<Self> #build_fn_where_clause_tokens {
+            use ::std::alloc::{Layout, alloc, handle_alloc_error};
+            use ::std::{mem, ptr};
+
+            #build_fn_tail_processing_tokens // Defines `len`, maybe `iter`
+
+            #header_layout_calc_tokens
+            #layout_calculation_for_tail_payload_tokens // Defines `layout_tail_payload`
+
+            let (full_node_layout_val, #offset_of_tail_payload_ident) = #layout_header_full_ident
+                .extend(layout_tail_payload)
+                .expect(&format!("Overflow in memory layout calculation for {}", #tail_field_name_str_val_for_format));
+            let final_layout = full_node_layout_val.pad_to_align();
+
+            unsafe {
+                let node_raw_ptr: *mut Self = if final_layout.size() == 0 {
+                    #create_zst_node_raw_ptr_tokens
+                } else {
+                    let mem_ptr = alloc(final_layout);
+                    if mem_ptr.is_null() {
+                        handle_alloc_error(final_layout);
+                    }
+                    #create_node_raw_ptr_for_non_zst_tokens
+                };
+
+                #(
+                    ::std::ptr::addr_of_mut!((*node_raw_ptr).#header_field_idents_for_write)
+                        .write(#header_field_idents_for_write);
+                )*
+
+                #write_tail_data_call_tokens
+
+                Box::from_raw(node_raw_ptr)
+            }
+        }
     }
-    let _ = write!(
-        params_doc,
-        "    - `{tail_param_name}`: `{tail_param_type_str}` - The data for the tail field `{tail_param_name}`."
-    );
-    params_doc
 }
 
 fn generate_build_method_for_slice(
@@ -438,95 +671,58 @@ fn generate_build_method_for_slice(
     offset_of_tail_payload_ident: &Ident,
     layout_header_full_ident: &Ident,
 ) -> proc_macro2::TokenStream {
-    let method_visibility = &builder_args.visibility;
     let base_method_name = &builder_args.base_method_name;
-    let tail_field_name_ident_for_access = field_info.tail_field_name_ident;
+    let tail_field_name_ident_for_access = field_info.tail_field_name_ident; // Used in quoted tokens
     let tail_field_name_str_val_for_format = &field_info.tail_field_name_str_val;
-    let build_fn_header_params = &field_info.build_fn_header_params;
-    let header_field_idents_for_write = &field_info.header_field_idents;
 
-    let layout_calculation_for_tail_payload_slice = quote_spanned! {field_info.tail_field.ty.span()=>
-        let layout_tail_payload = ::std::alloc::Layout::array::<#element_type>(len)
-            .expect(&format!("Layout for tail slice field '{}' failed", #tail_field_name_str_val_for_format));
-    };
+    let method_name_ident = base_method_name.clone();
+    let method_doc_string =
+        format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.",);
 
-    let element_type_str = quote! {#element_type}.to_string();
-    let doc_params_slice_str = generate_doc_params_string(
-        &field_info.header_param_names_types_for_docs,
-        tail_field_name_ident_for_access,
-        &format!("&[{element_type_str}]"),
-    );
-    let method_doc_slice = format!(
-        "Creates an instance of `Box<{struct_name_ident}>`.\n\n\
-         # Parameters\n\
-         {doc_params_slice_str}\n\n\
-         # Returns\n\n\
-         A `Box<{struct_name_ident}>` containing the initialized data."
-    );
-
-    let build_fn_name_ident_slice = base_method_name;
-    let build_fn_tail_param_type_slice = quote! { &[#element_type] };
-    let build_fn_tail_processing_slice =
+    let build_fn_tail_param_tokens = quote! { #tail_field_name_ident_for_access: &[#element_type] };
+    let build_fn_tail_processing_tokens =
         quote! { let len = #tail_field_name_ident_for_access.len(); };
-    let write_tail_data_call_slice = quote! {
-        // Only write if node_raw_ptr is not dangling due to ZST and len > 0
-        if final_layout.size() > 0 && len > 0 {
+
+    let layout_calculation_for_tail_payload_tokens = create_array_layout_calculation(
+        element_type,
+        tail_field_name_str_val_for_format,
+        field_info.tail_field.ty.span(),
+    );
+
+    let write_tail_data_call_tokens = quote! {
+        if final_layout.size() > 0 && len > 0 { // final_layout and len are in scope in common method
             let dest_slice_data_ptr = ::std::ptr::addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
             ::std::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), dest_slice_data_ptr, len);
         }
     };
-    quote! {
-        #[doc = #method_doc_slice]
-        #[allow(unused_variables)]
-        #[allow(clippy::transmute_undefined_repr)]
-        #method_visibility fn #build_fn_name_ident_slice(#( #build_fn_header_params, )* #tail_field_name_ident_for_access: #build_fn_tail_param_type_slice) -> Box<Self> {
-            use ::std::alloc::{Layout, alloc, handle_alloc_error};
-            use ::std::{mem, ptr};
-            #build_fn_tail_processing_slice
-            #header_layout_calc_tokens
-            #layout_calculation_for_tail_payload_slice
-            let (full_node_layout_val, #offset_of_tail_payload_ident) = #layout_header_full_ident
-                .extend(layout_tail_payload)
-                .expect(&format!("Layout extend for tail data of '{}' failed", #tail_field_name_str_val_for_format));
-            let final_layout = full_node_layout_val.pad_to_align();
 
-            unsafe {
-                let node_raw_ptr: *mut Self;
-                let mem_ptr: *mut u8; // Keep mem_ptr for writing header fields if ZST
+    let (create_node_raw_ptr_for_non_zst_tokens, create_zst_node_raw_ptr_tokens) =
+        create_slice_raw_ptr_tokens(element_type);
 
-                if final_layout.size() == 0 {
-                    // For zero-sized DSTs, create a dangling fat pointer.
-                    // The data part is the alignment, metadata (len) is 0.
-                    mem_ptr = final_layout.align() as *mut u8; // Non-null, aligned pointer
-                    let fat_pointer_components = (mem_ptr as *mut (), len); // len is 0 for empty slice/str
-                    node_raw_ptr = mem::transmute(fat_pointer_components);
-                } else {
-                    mem_ptr = alloc(final_layout);
-                    if mem_ptr.is_null() {
-                        handle_alloc_error(final_layout);
-                    }
-                    let fat_pointer_components = (mem_ptr as *mut (), len);
-                    node_raw_ptr = mem::transmute(fat_pointer_components);
-                }
+    let common_params = CommonBuildParams {
+        method_name_ident: &method_name_ident,
+        build_fn_tail_param_tokens: &build_fn_tail_param_tokens,
+        build_fn_generics_tokens: None,
+        build_fn_where_clause_tokens: None,
+        build_fn_tail_processing_tokens: &build_fn_tail_processing_tokens,
+        layout_calculation_for_tail_payload_tokens: &layout_calculation_for_tail_payload_tokens,
+        write_tail_data_call_tokens: &write_tail_data_call_tokens,
+        create_node_raw_ptr_for_non_zst_tokens: &create_node_raw_ptr_for_non_zst_tokens,
+        create_zst_node_raw_ptr_tokens: &create_zst_node_raw_ptr_tokens, // New field
+        method_doc_string: &method_doc_string,
+    };
 
-                // Write header fields. This is safe even for ZSTs if fields are ZSTs.
-                // If header fields are not ZSTs but the overall layout is zero (e.g. only ZST fields + empty slice),
-                // we still need to write them to the "dangling" but aligned pointer.
-                // The `ptr::addr_of_mut!((*node_raw_ptr).field)` will resolve correctly.
-                #(
-                    ::std::ptr::addr_of_mut!((*node_raw_ptr).#header_field_idents_for_write)
-                        .write(#header_field_idents_for_write);
-                )*
-
-                #write_tail_data_call_slice
-
-                Box::from_raw(node_raw_ptr)
-            }
-        }
-    }
+    generate_common_build_method(
+        builder_args,
+        field_info,
+        header_layout_calc_tokens,
+        offset_of_tail_payload_ident,
+        layout_header_full_ident,
+        &common_params,
+    )
 }
 
-fn generate_build_with_method_for_slice(
+fn generate_build_from_iter_method_for_slice(
     builder_args: &MakeDstBuilderArgs,
     struct_name_ident: &Ident,
     field_info: &FieldInfo,
@@ -535,94 +731,67 @@ fn generate_build_with_method_for_slice(
     offset_of_tail_payload_ident: &Ident,
     layout_header_full_ident: &Ident,
 ) -> proc_macro2::TokenStream {
-    let method_visibility = &builder_args.visibility;
     let base_method_name = &builder_args.base_method_name;
-    let tail_field_name_ident_for_access = field_info.tail_field_name_ident;
+    let tail_field_name_ident_for_access = field_info.tail_field_name_ident; // Used in quoted tokens
     let tail_field_name_str_val_for_format = &field_info.tail_field_name_str_val;
-    let build_fn_header_params = &field_info.build_fn_header_params;
-    let header_field_idents_for_write = &field_info.header_field_idents;
 
-    let layout_calculation_for_tail_payload_slice = quote_spanned! {field_info.tail_field.ty.span()=>
-        let layout_tail_payload = ::std::alloc::Layout::array::<#element_type>(len)
-            .expect(&format!("Layout for tail slice field '{}' failed", #tail_field_name_str_val_for_format));
-    };
+    let method_name_ident = format_ident!("{}_from_iter", base_method_name);
+    let method_doc_string =
+        format!("Creates an instance of `Box<{struct_name_ident}>` from an iterator.",);
 
-    let build_fn_name_ident_iter = format_ident!("{}_with", base_method_name);
     let iter_generic_param = format_ident!("I");
-    let build_fn_tail_param_type_iter = quote! { #iter_generic_param };
-    let build_fn_where_clause_iter = quote! {
+    let build_fn_tail_param_tokens =
+        quote! { #tail_field_name_ident_for_access: #iter_generic_param };
+    let build_fn_generics_tokens = Some(quote! { <#iter_generic_param> });
+    let build_fn_where_clause_tokens = Some(quote! {
         where #iter_generic_param: ::std::iter::IntoIterator<Item = #element_type>,
               <#iter_generic_param as ::std::iter::IntoIterator>::IntoIter: ::std::iter::ExactSizeIterator
-    };
-    let build_fn_tail_processing_iter = quote! {
+    });
+
+    let build_fn_tail_processing_tokens = quote! {
         let mut iter = #tail_field_name_ident_for_access.into_iter();
         let len = iter.len();
     };
-    let write_tail_data_call_iter = quote! {
-        // Only write if node_raw_ptr is not dangling due to ZST and len > 0
-        if final_layout.size() > 0 && len > 0 {
+
+    let layout_calculation_for_tail_payload_tokens = create_array_layout_calculation(
+        element_type,
+        tail_field_name_str_val_for_format,
+        field_info.tail_field.ty.span(),
+    );
+
+    let write_tail_data_call_tokens = quote! {
+        if final_layout.size() > 0 && len > 0 { // final_layout, len, iter are in scope
             let dest_slice_data_ptr = ::std::ptr::addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
             for (i, element) in iter.enumerate() {
                  unsafe { ::std::ptr::write(dest_slice_data_ptr.add(i), element); }
             }
         }
     };
-    let element_type_str = quote! {#element_type}.to_string();
-    let doc_params_iter_str = generate_doc_params_string(
-        &field_info.header_param_names_types_for_docs,
-        tail_field_name_ident_for_access,
-        &format!("impl IntoIterator<Item = {element_type_str}>"),
-    );
-    let method_doc_iter = format!(
-        "Creates an instance of `Box<{struct_name_ident}>`.\n\n\
-         # Parameters\n\
-         {doc_params_iter_str}\n\n\
-         # Returns\n\n\
-         A `Box<{struct_name_ident}>` containing the initialized data."
-    );
-    quote! {
-        #[doc = #method_doc_iter]
-        #[allow(unused_variables)]
-        #[allow(clippy::transmute_undefined_repr)]
-        #method_visibility fn #build_fn_name_ident_iter<#iter_generic_param>(#( #build_fn_header_params, )* #tail_field_name_ident_for_access: #build_fn_tail_param_type_iter) -> Box<Self> #build_fn_where_clause_iter {
-            use ::std::alloc::{Layout, alloc, handle_alloc_error};
-            use ::std::{mem, ptr};
-            #build_fn_tail_processing_iter
-            #header_layout_calc_tokens
-            #layout_calculation_for_tail_payload_slice
-            let (full_node_layout_val, #offset_of_tail_payload_ident) = #layout_header_full_ident
-                .extend(layout_tail_payload)
-                .expect(&format!("Layout extend for tail data of '{}' failed", #tail_field_name_str_val_for_format));
-            let final_layout = full_node_layout_val.pad_to_align();
 
-            unsafe {
-                let node_raw_ptr: *mut Self;
-                let mem_ptr: *mut u8;
+    let (create_node_raw_ptr_for_non_zst_tokens, create_zst_node_raw_ptr_tokens) =
+        create_slice_raw_ptr_tokens(element_type);
 
-                if final_layout.size() == 0 {
-                    mem_ptr = final_layout.align() as *mut u8;
-                    let fat_pointer_components = (mem_ptr as *mut (), len);
-                    node_raw_ptr = mem::transmute(fat_pointer_components);
-                } else {
-                    mem_ptr = alloc(final_layout);
-                    if mem_ptr.is_null() {
-                        handle_alloc_error(final_layout);
-                    }
-                    let fat_pointer_components = (mem_ptr as *mut (), len);
-                    node_raw_ptr = mem::transmute(fat_pointer_components);
-                }
+    let common_params = CommonBuildParams {
+        method_name_ident: &method_name_ident,
+        build_fn_tail_param_tokens: &build_fn_tail_param_tokens,
+        build_fn_generics_tokens: build_fn_generics_tokens.as_ref(),
+        build_fn_where_clause_tokens: build_fn_where_clause_tokens.as_ref(),
+        build_fn_tail_processing_tokens: &build_fn_tail_processing_tokens,
+        layout_calculation_for_tail_payload_tokens: &layout_calculation_for_tail_payload_tokens,
+        write_tail_data_call_tokens: &write_tail_data_call_tokens,
+        create_node_raw_ptr_for_non_zst_tokens: &create_node_raw_ptr_for_non_zst_tokens,
+        create_zst_node_raw_ptr_tokens: &create_zst_node_raw_ptr_tokens,
+        method_doc_string: &method_doc_string,
+    };
 
-                #(
-                    ::std::ptr::addr_of_mut!((*node_raw_ptr).#header_field_idents_for_write)
-                        .write(#header_field_idents_for_write);
-                )*
-
-                #write_tail_data_call_iter
-
-                Box::from_raw(node_raw_ptr)
-            }
-        }
-    }
+    generate_common_build_method(
+        builder_args,
+        field_info,
+        header_layout_calc_tokens,
+        offset_of_tail_payload_ident,
+        layout_header_full_ident,
+        &common_params,
+    )
 }
 
 fn generate_build_method_for_str(
@@ -633,89 +802,94 @@ fn generate_build_method_for_str(
     offset_of_tail_payload_ident: &Ident,
     layout_header_full_ident: &Ident,
 ) -> proc_macro2::TokenStream {
-    let method_visibility = &builder_args.visibility;
     let base_method_name = &builder_args.base_method_name;
-    let tail_field_name_ident_for_access = field_info.tail_field_name_ident;
+    let tail_field_name_ident_for_access = field_info.tail_field_name_ident; // Used in quoted tokens
     let tail_field_name_str_val_for_format = &field_info.tail_field_name_str_val;
-    let build_fn_header_params = &field_info.build_fn_header_params;
-    let header_field_idents_for_write = &field_info.header_field_idents;
 
-    let build_fn_name_ident_str = base_method_name;
-    let build_fn_tail_param_type_str = quote! { &str };
-    let build_fn_tail_processing_str = quote! {
+    let method_name_ident = base_method_name.clone();
+    let method_doc_string =
+        format!("Creates an instance of `Box<{struct_name_ident}>` from a string slice.",);
+
+    let build_fn_tail_param_tokens = quote! { #tail_field_name_ident_for_access: &str };
+    let build_fn_tail_processing_tokens = quote! {
         let len = #tail_field_name_ident_for_access.len();
     };
-    let layout_calculation_for_tail_payload_str = quote_spanned! {field_info.tail_field.ty.span()=>
-        let layout_tail_payload = ::std::alloc::Layout::array::<u8>(len)
-            .expect(&format!("Layout for tail str field '{}' failed", #tail_field_name_str_val_for_format));
-    };
-    let write_tail_data_call_str = quote! {
-        // Only write if node_raw_ptr is not dangling due to ZST and len > 0
-        if final_layout.size() > 0 && len > 0 {
+
+    let layout_calculation_for_tail_payload_tokens = create_array_layout_calculation(
+        &quote! { u8 },
+        tail_field_name_str_val_for_format,
+        field_info.tail_field.ty.span(),
+    );
+
+    let write_tail_data_call_tokens = quote! {
+        if final_layout.size() > 0 && len > 0 { // final_layout and len are in scope
             let dest_str_data_ptr = ::std::ptr::addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access) as *mut u8;
             ::std::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), dest_str_data_ptr, len);
         }
     };
-    let doc_params_str_val = generate_doc_params_string(
-        &field_info.header_param_names_types_for_docs,
-        tail_field_name_ident_for_access,
-        "&str",
-    );
-    let method_doc_str = format!(
-        "Creates an instance of `Box<{struct_name_ident}>`.\n\n\
-         # Parameters\n\
-         {doc_params_str_val}\n\n\
-         # Returns\n\n\
-         A `Box<{struct_name_ident}>` containing the initialized data."
-    );
-    quote! {
-        #[doc = #method_doc_str]
-        #[allow(unused_variables)]
-        #[allow(clippy::transmute_undefined_repr)]
-        #method_visibility fn #build_fn_name_ident_str(#( #build_fn_header_params, )* #tail_field_name_ident_for_access: #build_fn_tail_param_type_str) -> Box<Self> {
-            use ::std::alloc::{Layout, alloc, handle_alloc_error};
-            use ::std::{mem, ptr};
 
-            #build_fn_tail_processing_str
-            #header_layout_calc_tokens
-            #layout_calculation_for_tail_payload_str
+    let (create_node_raw_ptr_for_non_zst_tokens, create_zst_node_raw_ptr_tokens) =
+        create_str_raw_ptr_tokens();
 
-            let (full_node_layout_val, #offset_of_tail_payload_ident) = #layout_header_full_ident
-                .extend(layout_tail_payload)
-                .expect(&format!("Layout extend for tail data of '{}' failed", #tail_field_name_str_val_for_format));
-            let final_layout = full_node_layout_val.pad_to_align();
+    let common_params = CommonBuildParams {
+        method_name_ident: &method_name_ident,
+        build_fn_tail_param_tokens: &build_fn_tail_param_tokens,
+        build_fn_generics_tokens: None,
+        build_fn_where_clause_tokens: None,
+        build_fn_tail_processing_tokens: &build_fn_tail_processing_tokens,
+        layout_calculation_for_tail_payload_tokens: &layout_calculation_for_tail_payload_tokens,
+        write_tail_data_call_tokens: &write_tail_data_call_tokens,
+        create_node_raw_ptr_for_non_zst_tokens: &create_node_raw_ptr_for_non_zst_tokens,
+        create_zst_node_raw_ptr_tokens: &create_zst_node_raw_ptr_tokens,
+        method_doc_string: &method_doc_string,
+    };
 
-            unsafe {
-                let node_raw_ptr: *mut Self;
-                let mem_ptr: *mut u8;
-
-                if final_layout.size() == 0 {
-                    mem_ptr = final_layout.align() as *mut u8;
-                    let fat_pointer_components = (mem_ptr as *mut (), len);
-                    node_raw_ptr = mem::transmute(fat_pointer_components);
-                } else {
-                    mem_ptr = alloc(final_layout);
-                    if mem_ptr.is_null() {
-                        handle_alloc_error(final_layout);
-                    }
-                    let fat_pointer_components = (mem_ptr as *mut (), len);
-                    node_raw_ptr = mem::transmute(fat_pointer_components);
-                }
-
-                #(
-                    ::std::ptr::addr_of_mut!((*node_raw_ptr).#header_field_idents_for_write)
-                        .write(#header_field_idents_for_write);
-                )*
-
-                #write_tail_data_call_str
-
-                Box::from_raw(node_raw_ptr)
-            }
-        }
-    }
+    generate_common_build_method(
+        builder_args,
+        field_info,
+        header_layout_calc_tokens,
+        offset_of_tail_payload_ident,
+        layout_header_full_ident,
+        &common_params,
+    )
 }
 
-// --- Main Macro ---
+/// Generate builder methods for dynamically-sized types (DST) structs.
+///
+/// This macro, when applied to a struct whose last field is a slice (`[T]`) or `str`,
+/// generates an `impl` block with methods to construct `Box<Self>` instances with
+/// dynamically sized tail data.
+///
+/// # Usage
+///
+/// ```rust
+/// use tail_extend::make_dst_builder;
+///
+/// #[make_dst_builder(pub new)]
+/// struct MyStruct {
+///     id: u32,
+///     data: [u8],
+/// }
+/// // Generates: pub fn new(id: u32, data: &[u8]) -> Box<MyStruct>
+/// ```
+///
+/// # Attribute Arguments
+///
+/// - Optional visibility (e.g., `pub`, `pub(crate)`)
+/// - Optional base method name (default: `build`)
+///
+/// # Generated Methods
+///
+/// - For `[T]` tail: `fn <base>(fields..., tail: &[T]) -> Box<Self>`
+/// - For `[T]` tail: `fn <base>_from_iter<I>(fields..., tail: I) -> Box<Self>`
+///   where `I: IntoIterator<Item = T>, I::IntoIter: ExactSizeIterator`
+/// - For `str` tail: `fn <base>(fields..., tail: &str) -> Box<Self>`
+///
+/// # Errors
+///
+/// - Only structs with named fields are supported.
+/// - The last field must be a slice or `str`.
+/// - Malformed macro arguments will cause a compile error.
 #[proc_macro_attribute]
 pub fn make_dst_builder(attr_args_ts: TokenStream, item_ts: TokenStream) -> TokenStream {
     let result = make_dst_builder_impl(attr_args_ts.into(), item_ts.into());
@@ -761,7 +935,7 @@ fn make_dst_builder_impl(
                 &offset_of_tail_payload_ident,
                 &layout_header_full_ident,
             ));
-            generated_build_methods.push(generate_build_with_method_for_slice(
+            generated_build_methods.push(generate_build_from_iter_method_for_slice(
                 &builder_args,
                 struct_name_ident,
                 &field_info,
@@ -784,7 +958,7 @@ fn make_dst_builder_impl(
         _ => {
             return Err(syn::Error::new_spanned(
                 &field_info.tail_field.ty,
-                "The last field of a struct for make_dst_builder must be a slice [T] or str.",
+                "Last field must be a dynamically sized type like [T] or str",
             ));
         }
     }
