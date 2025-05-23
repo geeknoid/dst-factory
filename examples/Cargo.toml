@@ -1,4 +1,5 @@
 [package]
+resolver = "3"
 name = "example"
 publish = false
 version.workspace = true

@@ -1,221 +1,114 @@
-//! # `tail-extend`: Build `Box<DST>` with Ease
+//! C-like [flexible array members](https://en.wikipedia.org/wiki/Flexible_array_member) for Rust.
 //!
-//! This crate provides the `#[make_dst_builder]` procedural attribute macro
-//! for Rust structs. When applied to a struct definition that is a Dynamically
-//! Sized Type (DST) – meaning its last field is a slice `[T]` or `str` –
-//! this macro automatically generates an `impl` block. This block contains
-//! constructor methods to easily and safely create `Box<Self>` instances
-//! of the DST.
+//! This crate lets you allocate variable data inline at the end of a struct. If you have a
+//! struct that gets allocated on the heap and has some variable-length data associated with it
+//! (like a string or an array), then you can allocate this data directly inline with the struct.
+//! This saves memory by avoiding the need for a pointer and a separate allocation, and saves CPU
+//! cycles by eliminating the need for an indirection when accessing the data.
 //!
-//! The primary goal of `#[make_dst_builder]` is to abstract away the manual and
-//! error-prone complexities of memory layout calculations and unsafe pointer
-//! operations typically required for initializing DSTs where the size of the
-//! final field is determined at runtime.
+//! Rust supports the notion of [Dynamically Sized Types](https://doc.rust-lang.org/reference/dynamically-sized-types.html), known as DSTs,
+//! which are types that have a size
+//! not known at compile time. DSTs are perfect to implement flexible array members. But
+//! unfortunately, Rust doesn't provide an out-of-the-box way to allocate instances of such types.
+//! This is where this crate comes in.
 //!
-//! ## Usage
-//!
-//! Apply the `#[make_dst_builder]` attribute directly above your struct definition.
-//! You can customize the visibility and base name of the generated constructor methods.
-//!
-//! ### Syntax
-//!
-//! The attribute supports the following forms:
-//!
-//! 1.  **Default (private `build` method):**
-//!     ```rust
-//!     # use tail_extend::make_dst_builder;
-//!     #[make_dst_builder]
-//!     # struct MyStruct { field: u32, data: [u8] }
-//!     ```
-//!     Generates `fn build(...) -> Box<Self>`.
-//!
-//! 2.  **Custom method name (private):**
-//!     ```rust
-//!     # use tail_extend::make_dst_builder;
-//!     #[make_dst_builder(create)]
-//!     # struct MyStruct { field: u32, data: [u8] }
-//!     ```
-//!     Generates `fn create(...) -> Box<Self>`.
-//!
-//! 3.  **Public visibility (default `build` method name):**
-//!     ```rust
-//!     # use tail_extend::make_dst_builder;
-//!     #[make_dst_builder(pub)]
-//!     # struct MyStruct { field: u32, data: [u8] }
-//!     ```
-//!     Generates `pub fn build(...) -> Box<Self>`.
-//!
-//! 4.  **Public visibility and custom method name:**
-//!     ```rust
-//!     # use tail_extend::make_dst_builder;
-//!     #[make_dst_builder(new, pub)]
-//!     # struct MyStruct { field: u32, data: [u8] }
-//!     ```
-//!     Generates `pub fn new(...) -> Box<Self>`.
-//!
-//! 5. **With `no_std` support:**
-//!     ```rust
-//!     # use tail_extend::make_dst_builder;
-//!     #[make_dst_builder(no_std)]
-//!     # struct MyStruct { field: u32, data: [u8] }
-//!     ```
-//!     Generates methods using `::alloc::boxed::Box` instead of `::std::boxed::Box`.
-//!
-//! 6. **Combining options:**
-//!     ```rust
-//!     # use tail_extend::make_dst_builder;
-//!     #[make_dst_builder(create, pub, no_std)]
-//!     # struct MyStruct { field: u32, data: [u8] }
-//!     ```
-//!     Generates public methods with custom name and `no_std` support.
-//!
-//! You can use other visibilities like `pub(crate)` as well.
-//!
-//! ## Generated Methods
-//!
-//! Based on the type of the last field (the "tail" field), the macro generates
-//! one or two constructor methods. Let `<base_method_name>` be the name you
-//! specified (or `build` by default), and `HeaderFieldType1, HeaderFieldType2, ...`
-//! be the types of the fields preceding the tail field.
-//!
-//! ### For `tail: [T]` (slice tail)
-//!
-//! 1.  **From a slice:**
-//!     ```rust
-//!     # use tail_extend::make_dst_builder;
-//!     # #[make_dst_builder(example_build, pub)]
-//!     # struct ExampleSlice<G> { id: u32, generic_field: G, data: [u8] }
-//!     # fn signature_example<G>(id: u32, generic_field: G, data: &[u8]) -> Box<ExampleSlice<G>> {
-//!     // Signature:
-//!     // pub fn <base_method_name>(
-//!     //     header_field1: HeaderFieldType1,
-//!     //     header_field2: HeaderFieldType2,
-//!     //     ...,
-//!     //     tail_data: &[T]
-//!     // ) -> Box<Self>;
-//!     # todo!()
-//!     # }
-//!     ```
-//!
-//! 2.  **From an iterator (ExactSizeIterator):**
-//!     A `<base_method_name>_from_iter` method is also generated.
-//!     ```rust
-//!     # use tail_extend::make_dst_builder;
-//!     # #[make_dst_builder(example_build, pub)]
-//!     # struct ExampleSliceIter<G> { id: u32, generic_field: G, data: [u8] }
-//!     # fn signature_example_from_iter<G, I>(id: u32, generic_field: G, data_iter: I) -> Box<ExampleSliceIter<G>>
-//!     # where I: IntoIterator<Item = u8>, <I as IntoIterator>::IntoIter: ExactSizeIterator
-//!     # {
-//!     // Signature:
-//!     // pub fn <base_method_name>_from_iter<IterType>(
-//!     //     header_field1: HeaderFieldType1,
-//!     //     header_field2: HeaderFieldType2,
-//!     //     ...,
-//!     //     tail_data_iter: IterType
-//!     // ) -> Box<Self>
-//!     // where
-//!     //     IterType: IntoIterator<Item = T>,
-//!     //     <IterType as IntoIterator>::IntoIter: ExactSizeIterator;
-//!     # todo!()
-//!     # }
-//!     ```
-//!
-//! ### For `tail: str` (string slice tail)
-//!
-//! 1.  **From a string slice:**
-//!     ```rust
-//!     # use tail_extend::make_dst_builder;
-//!     # #[make_dst_builder(example_build_str, pub)]
-//!     # struct ExampleStr { name: String, description: str }
-//!     # fn signature_example_str(name: String, description: &str) -> Box<ExampleStr> {
-//!     // Signature:
-//!     // pub fn <base_method_name>(
-//!     //     header_field1: HeaderFieldType1,
-//!     //     header_field2: HeaderFieldType2,
-//!     //     ...,
-//!     //     tail_data: &str
-//!     // ) -> Box<Self>;
-//!     # todo!()
-//!     # }
-//!     ```
+//! You can apply the #[[`macro@make_dst_builder`]] attribute to your DST struct which causes factory
+//! methods to be produced that let you easily and safely create instances of your DST.
 //!
 //! ## Example
 //!
-//! Here's a comprehensive example demonstrating generics, lifetimes, and different
-//! tail types:
+//! Here's an example using an array as the last field of a struct:
 //!
 //! ```rust
 //! use tail_extend::make_dst_builder;
-//! use std::fmt::Debug;
 //!
-//! // Struct with a slice tail and generics
-//! #[make_dst_builder(create_packet, pub)]
-//! #[derive(Debug, PartialEq)] // For easy testing
-//! pub struct DataPacket<'a, IdType: Copy + Debug + PartialEq> { // Renamed ID_TYPE to IdType
-//!     packet_id: IdType,
-//!     source_ip: &'a str,
-//!     is_urgent: bool,
-//!     payload: [u8], // The dynamically sized tail field
+//! #[make_dst_builder]
+//! struct User {
+//!     age: u32,
+//!     signing_key: [u8],
 //! }
 //!
-//! // Struct with a str tail
-//! #[make_dst_builder(create_log)] // Private method
-//! #[derive(Debug, PartialEq)]
-//! pub struct LogEntry {
-//!     timestamp: u64,
-//!     level: String,
-//!     message: str, // The dynamically sized tail field
+//! // allocate one user with a 4 byte key
+//! let a = User::build(33, &[0, 1, 2, 3]);
+//!
+//! // allocate another user with a 5 byte key
+//! let b = User::build(33, &[0, 1, 2, 3, 4]);
+//!
+//! // allocate another user, this time using an iterator
+//! let v = vec![0u8, 1, 2, 3, 4];
+//! let iter = v.into_iter();
+//! let c = User::build_from_iter(33, iter);
+//! ```
+//! Here's another example, this time using a string as the last field of a struct:
+//!
+//! ```rust
+//! use tail_extend::make_dst_builder;
+//!
+//! #[make_dst_builder]
+//! struct User {
+//!     age: u32,
+//!     name: str,
 //! }
 //!
-//! // --- DataPacket Example ---
-//! let packet1_payload = vec![0xDE, 0xAD, 0xBE, 0xEF];
-//! let packet1 = DataPacket::create_packet(
-//!     1001_u32,      // packet_id
-//!     "192.168.1.1", // source_ip
-//!     true,          // is_urgent
-//!     &packet1_payload, // payload (slice)
-//! );
+//! // allocate one user with a 5-character string
+//! let a = User::build(33, "Alice");
 //!
-//! assert_eq!(packet1.packet_id, 1001_u32);
-//! assert_eq!(packet1.source_ip, "192.168.1.1");
-//! assert!(packet1.is_urgent);
-//! assert_eq!(packet1.payload, [0xDE, 0xAD, 0xBE, 0xEF]);
-//! println!("Packet 1: {:?}", packet1);
+//! // allocate another user with a 3-character string
+//! let b = User::build(33, "Bob");
+//! ```
+//! Because DSTs don't have a known size at compile time, you can't store them on the stack,
+//! and you can't pass them by value. As a result of these constraints, the `build` and
+//! `build_from_iter` functions always return boxed instances of the structs.
 //!
-//! // Using the _from_iter method for DataPacket (iterator)
-//! let packet2_payload_iter = vec![0xFF, 0xEE, 0xDD];
-//! let packet2 = DataPacket::create_packet_from_iter(
-//!     2002_u16,      // packet_id (different generic type)
-//!     "10.0.0.5",    // source_ip
-//!     false,         // is_urgent
-//!     packet2_payload_iter, // payload (iterator)
-//! );
-//! assert_eq!(packet2.packet_id, 2002_u16);
-//! assert_eq!(packet2.payload, [0xFF, 0xEE, 0xDD]);
-//! println!("Packet 2 (from iter): {:?}", packet2);
+//! ## Attribute Features
 //!
-//! // --- LogEntry Example ---
-//! let log1 = LogEntry::create_log(
-//!     1678886400,
-//!     "INFO".to_string(),
-//!     "System startup complete.",
-//! );
+//! The common use case for the #[[`macro@make_dst_builder`]] attribute is to not pass any arguments.
+//! This results in factory methods called `build` when using a string as the last field of the
+//! struct, and `build` and `build_from_iter` when using an array as the last field of the struct.
 //!
-//! assert_eq!(log1.timestamp, 1678886400);
-//! assert_eq!(log1.level, "INFO");
-//! assert_eq!(&log1.message, "System startup complete."); // Compare &log1.message with &str
-//! println!("Log 1: {:?}", log1);
+//! The generated methods are private by default and have the following signatures:
+//!
+//! ```ignore
+//! // for arrays
+//! fn build(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>;
+//! fn build_from_iter<I>(field1, field2, ..., last_field:: I) -> Box<Self>
+//! where
+//!     I: IntoIterator<Item = last_field_type>,
+//!     <I as IntoIterator>::IntoIter: ExactSizeIterator,
+//!
+//! // for strings
+//! fn build(field1, field2, ..., last_field: &str) -> Box<Self>;
+//! ```
+//!
+//! The attribute lets you control the name of the generated factory methods, their
+//! visibility, and whether to generate for the `no_std` environment. The general
+//! grammar is:
+//!
+//! ```ignore
+//! #[make_dst_builder(<base_method_name>[, <visibility>] [, no_std])]
+//! ```
+//!
+//! Some examples:
+//!
+//! ```ignore
+//! // The factory methods will be private and called `create` and `create_from_iter`
+//! #[make_dst_builder(create)]
+//!
+//! // The factory methods will be public and called `create` and `create_from_iter`
+//! #[make_dst_builder(create, pub)]
+//!
+//! // The factory methods will be private, called `create` and `create_from_iter`, and support the `no_std` environment
+//! #[make_dst_builder(create, no_std)]
 //! ```
 //!
 //! ## Error Conditions
 //!
-//! The `#[make_dst_builder]` macro produces a compile-time error if:
+//! The #[[`macro@make_dst_builder`]] macro produces a compile-time error if:
 //!
 //! - It's applied to anything other than a struct with named fields.
 //! - The struct has no fields (a tail field is essential for a DST).
-//! - The last field of the struct is not a slice (`[T]`) or a string slice (`str`).
-//! - The arguments provided to the `#[make_dst_builder(...)]` attribute are malformed
-//!   (e.g., incorrect visibility keyword, too many arguments).
+//! - The last field of the struct is not a slice (`[T]`) or a string (`str`).
+//! - The arguments are malformed (e.g., incorrect visibility keyword, too many arguments).
 
 extern crate proc_macro;
 
@@ -937,42 +830,32 @@ fn generate_build_method_for_str(
     )
 }
 
-/// Generate builder methods for dynamically-sized types (DST) structs.
+/// Generate builder methods for dynamically sized types (DST) structs.
 ///
 /// This macro, when applied to a struct whose last field is a slice (`[T]`) or `str`,
-/// generates an `impl` block with methods to construct `Box<Self>` instances with
+/// generates an `impl` block with methods to construct instances of the structs with
 /// dynamically sized tail data.
+///
+/// This attribute is generally used without any arguments, but more advaned
+/// uses can pass arguments with the following grammar:
+///
+/// ```ignore
+/// #[make_dst_builder(<base_method_name>[, <visibility>] [, no_std])]
+/// ```
+///
+/// Refer to the [crate-level documentation](crate) for more details and example uses.
 ///
 /// # Usage
 ///
 /// ```rust
 /// use tail_extend::make_dst_builder;
 ///
-/// #[make_dst_builder(new, )]
+/// #[make_dst_builder]
 /// struct MyStruct {
 ///     id: u32,
 ///     data: [u8],
 /// }
-/// // Generates: pub fn new(id: u32, data: &[u8]) -> Box<MyStruct>
 /// ```
-///
-/// # Attribute Arguments
-///
-/// - Optional visibility (e.g., `pub`, `pub(crate)`)
-/// - Optional base method name (default: `build`)
-///
-/// # Generated Methods
-///
-/// - For `[T]` tail: `fn <base>(fields..., tail: &[T]) -> Box<Self>`
-/// - For `[T]` tail: `fn <base>_from_iter<I>(fields..., tail: I) -> Box<Self>`
-///   where `I: IntoIterator<Item = T>, I::IntoIter: ExactSizeIterator`
-/// - For `str` tail: `fn <base>(fields..., tail: &str) -> Box<Self>`
-///
-/// # Errors
-///
-/// - Only structs with named fields are supported.
-/// - The last field must be a slice or `str`.
-/// - Malformed macro arguments will cause a compile error.
 #[proc_macro_attribute]
 pub fn make_dst_builder(attr_args_ts: TokenStream, item_ts: TokenStream) -> TokenStream {
     let result = make_dst_builder_impl(attr_args_ts.into(), item_ts.into());

@@ -8,9 +8,9 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-categories = ["memory-management"]
+categories = ["memory-management", "no-std"]
 description = "Macros to implement C's flexible array members in Rust"
-keywords = ["efficiency", "memory"]
+keywords = ["memory", "no_std", "ffi"]
 repository = "https://github.com/geeknoid/tail-extend"
 license = "MIT"
 authors = ["Martin Taillefer <martin@taillefer.org>"]
@@ -20,9 +20,8 @@ rust-version = "1.85.0"
 [workspace.dependencies]
 tail-extend = { path = "tail-extend" }
 quote = "1.0.40"
-syn = { version = "2.0.101", features = ["full", "printing", "parsing", "visit", "visit-mut", "fold", "clone-impls", "derive", "extra-traits"] }
+syn = { version = "2.0.101", features = ["full", "visit", "extra-traits"] }
 proc-macro2 = "1.0.95"
-proc-macro-error2 = "2.0.1"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

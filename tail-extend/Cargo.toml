@@ -1,7 +1,8 @@
 [package]
+resolver = "3"
 name = "tail-extend"
 description = "Macros to implement C's flexible array members in Rust"
-readme = "README.md"
+readme.workspace = true
 authors.workspace = true
 version.workspace = true
 edition.workspace = true
