@@ -148,11 +148,18 @@ impl Parse for MakeDstBuilderArgs {
             });
         }
 
-        // First parameter: Check for method name or no_std
+        // Parse each argument in order: method_name, visibility, no_std
+        // First parameter: Check if it's a method name or no_std
         if input.peek(syn::Ident) {
             let ident: Ident = input.parse()?;
             if ident == "no_std" {
                 no_std = true;
+                // No more arguments allowed after standalone no_std
+                if !input.is_empty() {
+                    return Err(
+                        input.error("'no_std' must be the only argument when specified first")
+                    );
+                }
                 return Ok(Self {
                     visibility,
                     base_method_name,
@@ -163,7 +170,7 @@ impl Parse for MakeDstBuilderArgs {
             // It's a custom method name
             base_method_name = ident;
 
-            // Must be followed by a comma if more arguments exist
+            // If this is the end, return early
             if input.is_empty() {
                 return Ok(Self {
                     visibility,
@@ -172,14 +179,21 @@ impl Parse for MakeDstBuilderArgs {
                 });
             }
 
-            let _comma: syn::Token![,] = input.parse()?;
+            // Must have a comma after method name if more parameters follow
+            let _comma: syn::Token![,] = input
+                .parse()
+                .map_err(|_| input.error("Expected comma after method name"))?;
+        } else if !input.is_empty() {
+            return Err(input.error("Expected identifier as first argument"));
         }
 
-        // Second parameter: Check for visibility
+        // Second parameter: Check for visibility (must start with 'pub')
         if !input.is_empty() && input.peek(syn::Token![pub]) {
-            visibility = input.parse()?;
+            visibility = input
+                .parse()
+                .map_err(|_| input.error("Failed to parse visibility"))?;
 
-            // Must be followed by a comma if more arguments exist
+            // If this is the end, return early
             if input.is_empty() {
                 return Ok(Self {
                     visibility,
@@ -188,16 +202,25 @@ impl Parse for MakeDstBuilderArgs {
                 });
             }
 
-            let _comma: syn::Token![,] = input.parse()?;
+            // Must have a comma after visibility if more parameters follow
+            let _comma: syn::Token![,] = input
+                .parse()
+                .map_err(|_| input.error("Expected comma after visibility"))?;
         }
 
-        // Third parameter: Check for no_std
-        if !input.is_empty() && input.peek(syn::Ident) {
-            let ident: Ident = input.parse()?;
-            if ident == "no_std" {
-                no_std = true;
+        // Third parameter: Must be no_std if present
+        if !input.is_empty() {
+            if input.peek(syn::Ident) {
+                let ident: Ident = input.parse()?;
+                if ident == "no_std" {
+                    no_std = true;
+                } else {
+                    return Err(input.error(format!(
+                        "Expected 'no_std' as the third argument, found '{ident}'"
+                    )));
+                }
             } else {
-                return Err(input.error("Expected 'no_std' as the third argument"));
+                return Err(input.error("Expected the 'no_std' identifier"));
             }
         }
 
@@ -836,7 +859,7 @@ fn generate_build_method_for_str(
 /// generates an `impl` block with methods to construct instances of the structs with
 /// dynamically sized tail data.
 ///
-/// This attribute is generally used without any arguments, but more advaned
+/// This attribute is generally used without any arguments, but more advanced
 /// uses can pass arguments with the following grammar:
 ///
 /// ```ignore
@@ -854,6 +877,13 @@ fn generate_build_method_for_str(
 /// struct MyStruct {
 ///     id: u32,
 ///     data: [u8],
+/// }
+///
+/// // With custom method name and public visibility
+/// #[make_dst_builder(create, pub)]
+/// struct PublicStruct {
+///     id: u32,
+///     data: str,
 /// }
 /// ```
 #[proc_macro_attribute]
