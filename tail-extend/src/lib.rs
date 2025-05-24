@@ -77,7 +77,7 @@
 //!     <I as IntoIterator>::IntoIter: ExactSizeIterator,
 //!
 //! // for strings
-//! fn build(field1, field2, ..., last_field: &str) -> Box<Self>;
+//! fn build(field1, field2, ..., last_field: impl AsRef<str>) -> Box<Self>;
 //! ```
 //!
 //! The attribute lets you control the name of the generated factory methods, their
@@ -751,9 +751,11 @@ fn generate_build_method_for_str(
     let method_doc_string =
         format!("Creates an instance of `Box<{struct_name_ident}>` from a string slice.",);
 
-    let build_fn_tail_param_tokens = quote! { #tail_field_name_ident_for_access: &str };
+    let build_fn_tail_param_tokens =
+        quote! { #tail_field_name_ident_for_access: impl ::core::convert::AsRef<str> };
     let build_fn_tail_processing_tokens = quote! {
-        let __tailextend_len = #tail_field_name_ident_for_access.len();
+        let __tailextend_s = #tail_field_name_ident_for_access.as_ref();
+        let __tailextend_len = __tailextend_s.len();
     };
 
     let layout_calculation_for_tail_payload_tokens =
@@ -762,7 +764,7 @@ fn generate_build_method_for_str(
     let write_tail_data_call_tokens = quote! {
         if __tailextend_final_layout.size() > 0 && __tailextend_len > 0 { // final_layout and len are in scope
             let __tailextend_dest_str_data_ptr = ::core::ptr::addr_of_mut!((*__tailextend_node_raw_ptr).#tail_field_name_ident_for_access) as *mut u8;
-            ::core::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), __tailextend_dest_str_data_ptr, __tailextend_len);
+            ::core::ptr::copy_nonoverlapping(__tailextend_s.as_ptr(), __tailextend_dest_str_data_ptr, __tailextend_len);
         }
     };
 
