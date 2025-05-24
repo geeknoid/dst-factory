@@ -216,8 +216,8 @@ fn create_array_layout_calculation<T: quote::ToTokens>(
     span: proc_macro2::Span,
 ) -> proc_macro2::TokenStream {
     quote_spanned! {span=>
-        let layout_tail_payload =
-            ::core::alloc::Layout::array::<#element_type>(len)
+        let __tailextend_layout_tail_payload =
+            ::core::alloc::Layout::array::<#element_type>(__tailextend_len)
                 .expect("Overflow in memory layout calculation");
     }
 }
@@ -227,13 +227,13 @@ fn create_slice_raw_ptr_tokens<T: quote::ToTokens>(
     element_type: &T,
 ) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     let non_zst = quote! {
-        ::core::ptr::slice_from_raw_parts_mut(mem_ptr as *mut #element_type, len) as *mut Self
+        ::core::ptr::slice_from_raw_parts_mut(__tailextend_mem_ptr as *mut #element_type, __tailextend_len) as *mut Self
     };
 
     let zst = quote! {
         {
             let data_ptr = ::core::ptr::NonNull::<#element_type>::dangling().as_ptr();
-            ::core::ptr::slice_from_raw_parts_mut(data_ptr, len) as *mut Self
+            ::core::ptr::slice_from_raw_parts_mut(data_ptr, __tailextend_len) as *mut Self
         }
     };
 
@@ -243,15 +243,15 @@ fn create_slice_raw_ptr_tokens<T: quote::ToTokens>(
 // --- Helper for creating raw node pointers for string slices ---
 fn create_str_raw_ptr_tokens() -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     let non_zst = quote! {
-        let fat_pointer_components = (mem_ptr as *mut (), len);
-        ::core::mem::transmute(fat_pointer_components)
+        let __tailextend_fat_pointer_components = (__tailextend_mem_ptr as *mut (), __tailextend_len);
+        ::core::mem::transmute(__tailextend_fat_pointer_components)
     };
 
     let zst = quote! {
         {
             let data_ptr = ::core::ptr::NonNull::<u8>::dangling().as_ptr();
-            let fat_pointer_components = (data_ptr as *mut (), len);
-            ::core::mem::transmute(fat_pointer_components)
+            let __tailextend_fat_pointer_components = (data_ptr as *mut (), __tailextend_len);
+            ::core::mem::transmute(__tailextend_fat_pointer_components)
         }
     };
 
@@ -399,8 +399,8 @@ fn generate_header_layout_code(
     header_field_structs: &[&Field],
     input_struct_generics: &Generics,
 ) -> proc_macro2::TokenStream {
-    let layout_header_full_ident = format_ident!("layout_header_full");
-    let helper_struct_name = format_ident!("PrefixLayoutHelper");
+    let layout_header_full_ident = format_ident!("__tailextend_layout_header_full");
+    let helper_struct_name = format_ident!("__tailextend_PrefixLayoutHelper");
 
     if header_field_structs.is_empty() {
         return quote! {
@@ -553,7 +553,7 @@ fn generate_common_build_method(
     let handle_alloc_error = if no_std {
         quote! { panic!("memory allocation failed: out of memory") }
     } else {
-        quote! { ::std::alloc::handle_alloc_error(final_layout) }
+        quote! { ::std::alloc::handle_alloc_error(__tailextend_final_layout) }
     };
 
     // Destructure common_params for easier use in quote!
@@ -578,35 +578,35 @@ fn generate_common_build_method(
             #( #build_fn_header_params, )*
             #build_fn_tail_param_tokens
         ) -> #box_path<Self> #build_fn_where_clause_tokens {
-            #build_fn_tail_processing_tokens // Defines `len`, maybe `iter`
+            #build_fn_tail_processing_tokens // Defines `__tailextend_len`, maybe `__tailextend_iter`
 
-            #header_layout_calc_tokens
-            #layout_calculation_for_tail_payload_tokens // Defines `layout_tail_payload`
+            #header_layout_calc_tokens // Defines `__tailextend_layout_header_full`
+            #layout_calculation_for_tail_payload_tokens // Defines `__tailextend_layout_tail_payload`, uses `__tailextend_len`
 
-            let (full_node_layout_val, #offset_of_tail_payload_ident) = #layout_header_full_ident
-                .extend(layout_tail_payload)
+            let (__tailextend_full_node_layout_val, #offset_of_tail_payload_ident) = #layout_header_full_ident
+                .extend(__tailextend_layout_tail_payload)
                 .expect("Overflow in memory layout calculation");
-            let final_layout = full_node_layout_val.pad_to_align();
+            let __tailextend_final_layout = __tailextend_full_node_layout_val.pad_to_align();
 
             unsafe {
-                let node_raw_ptr: *mut Self = if final_layout.size() == 0 {
-                    #create_zst_node_raw_ptr_tokens
+                let __tailextend_node_raw_ptr: *mut Self = if __tailextend_final_layout.size() == 0 {
+                    #create_zst_node_raw_ptr_tokens // Uses `__tailextend_len`
                 } else {
-                    let mem_ptr = #alloc_path(final_layout);
-                    if mem_ptr.is_null() {
+                    let __tailextend_mem_ptr = #alloc_path(__tailextend_final_layout);
+                    if __tailextend_mem_ptr.is_null() {
                         #handle_alloc_error;
                     }
-                    #create_node_raw_ptr_for_non_zst_tokens
+                    #create_node_raw_ptr_for_non_zst_tokens // Uses `__tailextend_mem_ptr` and `__tailextend_len`
                 };
 
                 #(
-                    ::core::ptr::addr_of_mut!((*node_raw_ptr).#header_field_idents_for_write)
+                    ::core::ptr::addr_of_mut!((*__tailextend_node_raw_ptr).#header_field_idents_for_write)
                         .write(#header_field_idents_for_write);
                 )*
 
-                #write_tail_data_call_tokens
+                #write_tail_data_call_tokens // Uses `__tailextend_final_layout`, `__tailextend_len`, `__tailextend_node_raw_ptr`, maybe `__tailextend_iter`
 
-                #box_path::from_raw(node_raw_ptr)
+                #box_path::from_raw(__tailextend_node_raw_ptr)
             }
         }
     }
@@ -630,15 +630,15 @@ fn generate_build_method_for_slice(
 
     let build_fn_tail_param_tokens = quote! { #tail_field_name_ident_for_access: &[#element_type] };
     let build_fn_tail_processing_tokens =
-        quote! { let len = #tail_field_name_ident_for_access.len(); };
+        quote! { let __tailextend_len = #tail_field_name_ident_for_access.len(); };
 
     let layout_calculation_for_tail_payload_tokens =
         create_array_layout_calculation(element_type, field_info.tail_field.ty.span());
 
     let write_tail_data_call_tokens = quote! {
-        if final_layout.size() > 0 && len > 0 { // final_layout and len are in scope in common method
-            let dest_slice_data_ptr = ::core::ptr::addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
-            ::core::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), dest_slice_data_ptr, len);
+        if __tailextend_final_layout.size() > 0 && __tailextend_len > 0 { // final_layout and len are in scope in common method
+            let __tailextend_dest_slice_data_ptr = ::core::ptr::addr_of_mut!((*__tailextend_node_raw_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
+            ::core::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), __tailextend_dest_slice_data_ptr, __tailextend_len);
         }
     };
 
@@ -694,18 +694,18 @@ fn generate_build_from_iter_method_for_slice(
     });
 
     let build_fn_tail_processing_tokens = quote! {
-        let mut iter = #tail_field_name_ident_for_access.into_iter();
-        let len = iter.len();
+        let mut __tailextend_iter = #tail_field_name_ident_for_access.into_iter();
+        let __tailextend_len = __tailextend_iter.len();
     };
 
     let layout_calculation_for_tail_payload_tokens =
         create_array_layout_calculation(element_type, field_info.tail_field.ty.span());
 
     let write_tail_data_call_tokens = quote! {
-        if final_layout.size() > 0 && len > 0 { // final_layout, len, iter are in scope
-            let dest_slice_data_ptr = ::core::ptr::addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
-            for (i, element) in iter.enumerate() {
-                 unsafe { ::core::ptr::write(dest_slice_data_ptr.add(i), element); }
+        if __tailextend_final_layout.size() > 0 && __tailextend_len > 0 { // final_layout, len, iter are in scope
+            let __tailextend_dest_slice_data_ptr = ::core::ptr::addr_of_mut!((*__tailextend_node_raw_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
+            for (i, element) in __tailextend_iter.enumerate() {
+                 unsafe { ::core::ptr::write(__tailextend_dest_slice_data_ptr.add(i), element); }
             }
         }
     };
@@ -753,16 +753,16 @@ fn generate_build_method_for_str(
 
     let build_fn_tail_param_tokens = quote! { #tail_field_name_ident_for_access: &str };
     let build_fn_tail_processing_tokens = quote! {
-        let len = #tail_field_name_ident_for_access.len();
+        let __tailextend_len = #tail_field_name_ident_for_access.len();
     };
 
     let layout_calculation_for_tail_payload_tokens =
         create_array_layout_calculation(&quote! { u8 }, field_info.tail_field.ty.span());
 
     let write_tail_data_call_tokens = quote! {
-        if final_layout.size() > 0 && len > 0 { // final_layout and len are in scope
-            let dest_str_data_ptr = ::core::ptr::addr_of_mut!((*node_raw_ptr).#tail_field_name_ident_for_access) as *mut u8;
-            ::core::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), dest_str_data_ptr, len);
+        if __tailextend_final_layout.size() > 0 && __tailextend_len > 0 { // final_layout and len are in scope
+            let __tailextend_dest_str_data_ptr = ::core::ptr::addr_of_mut!((*__tailextend_node_raw_ptr).#tail_field_name_ident_for_access) as *mut u8;
+            ::core::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), __tailextend_dest_str_data_ptr, __tailextend_len);
         }
     };
 
@@ -856,9 +856,11 @@ fn make_dst_builder_impl(
         generate_header_layout_code(&field_info.header_field_structs, struct_generics);
 
     let mut generated_build_methods: Vec<proc_macro2::TokenStream> = Vec::new();
-    let offset_of_tail_payload_ident =
-        format_ident!("offset_of_{}_payload", field_info.tail_field_name_ident);
-    let layout_header_full_ident = format_ident!("layout_header_full");
+    let offset_of_tail_payload_ident = format_ident!(
+        "__tailextend_offset_of_{}_payload",
+        field_info.tail_field_name_ident
+    );
+    let layout_header_full_ident = format_ident!("__tailextend_layout_header_full");
 
     match &field_info.tail_field.ty {
         Type::Slice(TypeSlice { elem, .. }) => {
