@@ -70,7 +70,7 @@
 //!
 //! ```ignore
 //! // for arrays
-//! fn build(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>;
+//! fn build(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self> where last_field_type: Clone;
 //! fn build_from_iter<I>(field1, field2, ..., last_field: I) -> Box<Self>
 //! where
 //!     I: IntoIterator<Item = last_field_type>,
@@ -116,6 +116,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
 use std::collections::HashSet;
 use syn::parse::discouraged::Speculative;
+use syn::token::Where;
 use syn::{
     Field, Fields, GenericParam, Generics, Ident, ItemStruct, Lifetime, Token, Type, TypePath,
     TypeSlice, Visibility,
@@ -536,24 +537,18 @@ fn generate_common_build_method(
     let header_field_idents_for_write = &field_info.header_field_idents;
     let no_std = builder_args.no_std;
 
-    // Box and allocation namespace paths based on the no_std flag
-    let box_path = if no_std {
-        quote! { ::alloc::boxed::Box }
+    let (box_path, alloc_path, handle_alloc_error) = if no_std {
+        (
+            quote! { ::alloc::boxed::Box },
+            quote! { ::alloc::alloc::alloc },
+            quote! { panic!("out of memory") },
+        )
     } else {
-        quote! { ::std::boxed::Box }
-    };
-
-    let alloc_path = if no_std {
-        quote! { ::alloc::alloc::alloc }
-    } else {
-        quote! { ::std::alloc::alloc }
-    };
-
-    // Handle allocation error based on the no_std flag
-    let handle_alloc_error = if no_std {
-        quote! { panic!("memory allocation failed: out of memory") }
-    } else {
-        quote! { ::std::alloc::handle_alloc_error(__tailextend_final_layout) }
+        (
+            quote! { ::std::boxed::Box },
+            quote! { ::std::alloc::alloc },
+            quote! { ::std::alloc::handle_alloc_error(__tailextend_final_layout) },
+        )
     };
 
     // Destructure common_params for easier use in quote!
@@ -572,8 +567,10 @@ fn generate_common_build_method(
 
     quote! {
         #[doc = #method_doc_string]
-        #[allow(unused_variables)] // For len, iter etc. if not used by all paths
-        #[expect(clippy::transmute_undefined_repr)] // For the transmutes
+        #[allow(unused_variables)]
+        #[allow(clippy::let_unit_value)]
+        #[allow(clippy::zst_offset)]
+        #[allow(clippy::transmute_undefined_repr)] // For the transmutes
         #method_visibility fn #method_name_ident #build_fn_generics_tokens (
             #( #build_fn_header_params, )*
             #build_fn_tail_param_tokens
@@ -612,11 +609,13 @@ fn generate_common_build_method(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn generate_build_method_for_slice(
     builder_args: &MakeDstBuilderArgs,
     struct_name_ident: &Ident,
     field_info: &FieldInfo,
     element_type: &Type,
+    input_struct_generics: &Generics,
     header_layout_calc_tokens: &proc_macro2::TokenStream,
     offset_of_tail_payload_ident: &Ident,
     layout_header_full_ident: &Ident,
@@ -629,16 +628,38 @@ fn generate_build_method_for_slice(
         format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.",);
 
     let build_fn_tail_param_tokens = quote! { #tail_field_name_ident_for_access: &[#element_type] };
+
+    let clone_predicate: syn::WherePredicate = syn::parse_quote_spanned! {element_type.span()=>
+        #element_type: ::core::clone::Clone
+    };
+
+    let mut final_where_clause = input_struct_generics
+        .where_clause
+        .clone()
+        .unwrap_or_else(|| syn::WhereClause {
+            where_token: Where::default(),
+            predicates: Punctuated::new(),
+        });
+
+    final_where_clause.predicates.push(clone_predicate);
+
+    let build_fn_where_clause_tokens_option = Some(quote! { #final_where_clause });
+
     let build_fn_tail_processing_tokens =
         quote! { let __tailextend_len = #tail_field_name_ident_for_access.len(); };
 
     let layout_calculation_for_tail_payload_tokens =
         create_array_layout_calculation(element_type, field_info.tail_field.ty.span());
 
-    let write_tail_data_call_tokens = quote! {
-        if __tailextend_final_layout.size() > 0 && __tailextend_len > 0 { // final_layout and len are in scope in common method
+    let write_tail_data_call_tokens = quote_spanned! {element_type.span()=>
+        if __tailextend_final_layout.size() > 0 && __tailextend_len > 0 {
             let __tailextend_dest_slice_data_ptr = ::core::ptr::addr_of_mut!((*__tailextend_node_raw_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
-            ::core::ptr::copy_nonoverlapping(#tail_field_name_ident_for_access.as_ptr(), __tailextend_dest_slice_data_ptr, __tailextend_len);
+            for __tailextend_idx in 0..__tailextend_len {
+                let __tailextend_src_val_ref = #tail_field_name_ident_for_access.get_unchecked(__tailextend_idx);
+                #[allow(clippy::clone_on_copy)]
+                let __tailextend_cloned_val = __tailextend_src_val_ref.clone();
+                ::core::ptr::write(__tailextend_dest_slice_data_ptr.add(__tailextend_idx), __tailextend_cloned_val);
+            }
         }
     };
 
@@ -649,7 +670,7 @@ fn generate_build_method_for_slice(
         method_name_ident: &method_name_ident,
         build_fn_tail_param_tokens: &build_fn_tail_param_tokens,
         build_fn_generics_tokens: None,
-        build_fn_where_clause_tokens: None,
+        build_fn_where_clause_tokens: build_fn_where_clause_tokens_option.as_ref(),
         build_fn_tail_processing_tokens: &build_fn_tail_processing_tokens,
         layout_calculation_for_tail_payload_tokens: &layout_calculation_for_tail_payload_tokens,
         write_tail_data_call_tokens: &write_tail_data_call_tokens,
@@ -871,6 +892,7 @@ fn make_dst_builder_impl(
                 struct_name_ident,
                 &field_info,
                 elem,
+                struct_generics,
                 &header_layout_calc_tokens,
                 &offset_of_tail_payload_ident,
                 &layout_header_full_ident,

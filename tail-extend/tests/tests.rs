@@ -243,7 +243,6 @@ fn test_zst_slice_dst() {
     assert_eq!(instance.metadata, 0xAB_CDEF);
     assert_eq!(instance.unit_slice.len(), 4);
 }
-
 #[test]
 fn test_no_std() {
     let t = trybuild::TestCases::new();
