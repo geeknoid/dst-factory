@@ -85,7 +85,7 @@ The generated methods are private by default and have the following signatures:
 ```ignore
 // for arrays
 fn build(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>;
-fn build_from_iter<I>(field1, field2, ..., last_field:: I) -> Box<Self>
+fn build_from_iter<I>(field1, field2, ..., last_field: I) -> Box<Self>
 where
     I: IntoIterator<Item = last_field_type>,
     <I as IntoIterator>::IntoIter: ExactSizeIterator,
