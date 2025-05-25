@@ -110,9 +110,11 @@
 //! - The last field of the struct is not a slice (`[T]`) or a string (`str`).
 //! - The arguments are malformed (e.g., incorrect visibility keyword, too many arguments).
 
+#![allow(clippy::too_many_arguments)]
+
 extern crate proc_macro;
 
-use proc_macro::TokenStream;
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
 use std::collections::HashSet;
 use syn::parse::discouraged::Speculative;
@@ -125,7 +127,6 @@ use syn::{
     spanned::Spanned,
     visit::{self, Visit},
 };
-// --- Helper Struct for Macro Arguments ---
 
 struct MakeDstBuilderArgs {
     visibility: Visibility,
@@ -192,75 +193,42 @@ impl Parse for MakeDstBuilderArgs {
 struct FieldInfo<'a> {
     header_field_structs: Vec<&'a Field>,
     header_field_idents: Vec<&'a Ident>,
-    build_fn_header_params: Vec<proc_macro2::TokenStream>,
+    build_fn_header_params: Vec<TokenStream>,
     tail_field: &'a Field,
     tail_field_name_ident: &'a Ident,
 }
 
 // --- Helper Struct for Common Build Method Parameters ---
 struct CommonBuildParams<'a> {
-    method_name_ident: &'a Ident,
-    build_fn_tail_param_tokens: &'a proc_macro2::TokenStream,
-    build_fn_generics_tokens: Option<&'a proc_macro2::TokenStream>,
-    build_fn_where_clause_tokens: Option<&'a proc_macro2::TokenStream>,
-    build_fn_tail_processing_tokens: &'a proc_macro2::TokenStream,
-    layout_calculation_for_tail_payload_tokens: &'a proc_macro2::TokenStream,
-    write_tail_data_call_tokens: &'a proc_macro2::TokenStream,
-    create_node_raw_ptr_for_non_zst_tokens: &'a proc_macro2::TokenStream,
-    create_zst_node_raw_ptr_tokens: &'a proc_macro2::TokenStream,
-    method_doc_string: &'a str,
+    builder_args: &'a MakeDstBuilderArgs,
+    field_info: &'a FieldInfo<'a>,
+    header_layout_calc_tokens: &'a TokenStream,
+    offset_of_tail_payload_ident: &'a Ident,
+    layout_header_full_ident: &'a Ident,
+    unique_tuple_ident: &'a Ident, // Added field
+    method_name_ident: Ident,
+    build_fn_tail_param_tokens: TokenStream,
+    build_fn_generics_tokens: Option<TokenStream>,
+    build_fn_where_clause_tokens: Option<TokenStream>,
+    build_fn_tail_processing_tokens: TokenStream,
+    layout_calculation_for_tail_payload_tokens: TokenStream,
+    write_tail_data_call_tokens: TokenStream,
+    method_doc_string: String,
 }
 
 // --- Helper for array/slice layout calculations ---
 fn create_array_layout_calculation<T: quote::ToTokens>(
     element_type: &T,
     span: proc_macro2::Span,
-) -> proc_macro2::TokenStream {
+) -> TokenStream {
     quote_spanned! {span=>
-        let __tailextend_layout_tail_payload =
-            ::core::alloc::Layout::array::<#element_type>(__tailextend_len)
-                .expect("Overflow in memory layout calculation");
+        let layout_tail_payload =
+            ::core::alloc::Layout::array::<#element_type>(len)
+                .expect("Array exceeds maximum size allowed of isize::MAX");
     }
 }
 
-// --- Helper for creating raw node pointers for slices ---
-fn create_slice_raw_ptr_tokens<T: quote::ToTokens>(
-    element_type: &T,
-) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
-    let non_zst = quote! {
-        ::core::ptr::slice_from_raw_parts_mut(__tailextend_mem_ptr as *mut #element_type, __tailextend_len) as *mut Self
-    };
-
-    let zst = quote! {
-        {
-            let data_ptr = ::core::ptr::NonNull::<#element_type>::dangling().as_ptr();
-            ::core::ptr::slice_from_raw_parts_mut(data_ptr, __tailextend_len) as *mut Self
-        }
-    };
-
-    (non_zst, zst)
-}
-
-// --- Helper for creating raw node pointers for string slices ---
-fn create_str_raw_ptr_tokens() -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
-    let non_zst = quote! {
-        let __tailextend_fat_pointer_components = (__tailextend_mem_ptr as *mut (), __tailextend_len);
-        ::core::mem::transmute(__tailextend_fat_pointer_components)
-    };
-
-    let zst = quote! {
-        {
-            let data_ptr = ::core::ptr::NonNull::<u8>::dangling().as_ptr();
-            let __tailextend_fat_pointer_components = (data_ptr as *mut (), __tailextend_len);
-            ::core::mem::transmute(__tailextend_fat_pointer_components)
-        }
-    };
-
-    (non_zst, zst)
-}
-
-// --- Helper for Generic Parameter Usage Analysis ---
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct UsedGenericParams {
     lifetimes: HashSet<Lifetime>,
     types: HashSet<Ident>,
@@ -332,7 +300,7 @@ impl<'ast> Visit<'ast> for GenericUsageVisitor<'_> {
 fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
     let mut header_field_structs: Vec<&Field> = Vec::new();
     let mut header_field_idents: Vec<&Ident> = Vec::new();
-    let mut build_fn_header_params: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut build_fn_header_params: Vec<TokenStream> = Vec::new();
 
     let tail_field: &Field;
     let tail_field_name_ident: &Ident;
@@ -399,9 +367,9 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
 fn generate_header_layout_code(
     header_field_structs: &[&Field],
     input_struct_generics: &Generics,
-) -> proc_macro2::TokenStream {
-    let layout_header_full_ident = format_ident!("__tailextend_layout_header_full");
-    let helper_struct_name = format_ident!("__tailextend_PrefixLayoutHelper");
+) -> TokenStream {
+    let layout_header_full_ident = format_ident!("layout_header_full");
+    let helper_struct_name = format_ident!("PrefixLayoutHelper");
 
     if header_field_structs.is_empty() {
         return quote! {
@@ -524,20 +492,36 @@ fn generate_header_layout_code(
 
 // --- Unified Build Method Generation ---
 
-fn generate_common_build_method(
-    builder_args: &MakeDstBuilderArgs,
-    field_info: &FieldInfo,
-    header_layout_calc_tokens: &proc_macro2::TokenStream,
-    offset_of_tail_payload_ident: &Ident,
-    layout_header_full_ident: &Ident,
-    common_params: &CommonBuildParams,
-) -> proc_macro2::TokenStream {
-    let method_visibility = &builder_args.visibility;
-    let build_fn_header_params = &field_info.build_fn_header_params;
-    let header_field_idents_for_write = &field_info.header_field_idents;
-    let no_std = builder_args.no_std;
+fn generate_build_method_common(common_params: CommonBuildParams) -> TokenStream {
+    let CommonBuildParams {
+        builder_args:
+            MakeDstBuilderArgs {
+                visibility: method_visibility,
+                no_std,
+                ..
+            },
+        field_info:
+            FieldInfo {
+                build_fn_header_params,
+                header_field_idents: header_param_idents_in_signature,
+                tail_field_name_ident: tail_param_ident_in_signature,
+                ..
+            },
+        header_layout_calc_tokens,
+        offset_of_tail_payload_ident,
+        layout_header_full_ident,
+        unique_tuple_ident, // Destructure the new field
+        method_name_ident,
+        build_fn_tail_param_tokens,
+        build_fn_generics_tokens,
+        build_fn_where_clause_tokens,
+        build_fn_tail_processing_tokens,
+        layout_calculation_for_tail_payload_tokens,
+        write_tail_data_call_tokens,
+        method_doc_string,
+    } = common_params;
 
-    let (box_path, alloc_path, handle_alloc_error) = if no_std {
+    let (box_path, alloc_path, handle_alloc_error) = if *no_std {
         (
             quote! { ::alloc::boxed::Box },
             quote! { ::alloc::alloc::alloc },
@@ -547,85 +531,94 @@ fn generate_common_build_method(
         (
             quote! { ::std::boxed::Box },
             quote! { ::std::alloc::alloc },
-            quote! { ::std::alloc::handle_alloc_error(__tailextend_final_layout) },
+            quote! { ::std::alloc::handle_alloc_error(final_layout) },
         )
     };
 
-    // Destructure common_params for easier use in quote!
-    let CommonBuildParams {
-        method_name_ident,
-        build_fn_tail_param_tokens,
-        build_fn_generics_tokens,
-        build_fn_where_clause_tokens,
-        build_fn_tail_processing_tokens,
-        layout_calculation_for_tail_payload_tokens,
-        write_tail_data_call_tokens,
-        create_node_raw_ptr_for_non_zst_tokens,
-        create_zst_node_raw_ptr_tokens,
-        method_doc_string,
-    } = common_params;
+    let tuple_elements_for_assignment = header_param_idents_in_signature
+        .iter()
+        .map(|ident| quote! { #ident })
+        .chain(std::iter::once(quote! { #tail_param_ident_in_signature }))
+        .collect::<Vec<_>>();
+
+    let tuple_assignment = quote! {
+        let #unique_tuple_ident = ( #( #tuple_elements_for_assignment, )* );
+    };
+
+    let header_field_writes =
+        header_param_idents_in_signature
+            .iter()
+            .enumerate()
+            .map(|(idx, field_ident_on_struct)| {
+                let tuple_idx = syn::Index::from(idx);
+                quote! {
+                    ::core::ptr::write(&mut ((*fat_ptr).#field_ident_on_struct), #unique_tuple_ident.#tuple_idx);
+                }
+            });
 
     quote! {
         #[doc = #method_doc_string]
         #[allow(unused_variables)]
         #[allow(clippy::let_unit_value)]
         #[allow(clippy::zst_offset)]
-        #[allow(clippy::transmute_undefined_repr)] // For the transmutes
+        #[allow(clippy::transmute_undefined_repr)]
         #method_visibility fn #method_name_ident #build_fn_generics_tokens (
             #( #build_fn_header_params, )*
             #build_fn_tail_param_tokens
         ) -> #box_path<Self> #build_fn_where_clause_tokens {
-            #build_fn_tail_processing_tokens // Defines `__tailextend_len`, maybe `__tailextend_iter`
+            #tuple_assignment
 
-            #header_layout_calc_tokens // Defines `__tailextend_layout_header_full`
-            #layout_calculation_for_tail_payload_tokens // Defines `__tailextend_layout_tail_payload`, uses `__tailextend_len`
+            #build_fn_tail_processing_tokens
 
-            let (__tailextend_full_node_layout_val, #offset_of_tail_payload_ident) = #layout_header_full_ident
-                .extend(__tailextend_layout_tail_payload)
-                .expect("Overflow in memory layout calculation");
-            let __tailextend_final_layout = __tailextend_full_node_layout_val;
+            #header_layout_calc_tokens
+            #layout_calculation_for_tail_payload_tokens
+
+            let (final_layout, #offset_of_tail_payload_ident) = #layout_header_full_ident
+                .extend(layout_tail_payload)
+                .expect("Struct exceeds maximum size allowed of isize::MAX");
 
             unsafe {
-                let __tailextend_node_raw_ptr: *mut Self = if __tailextend_final_layout.size() == 0 {
-                    #create_zst_node_raw_ptr_tokens // Uses `__tailextend_len`
+                if final_layout.size() == 0 {
+                    let data_ptr = ::core::ptr::NonNull::<u8>::dangling().as_ptr();
+                    let fat_ptr_components = (data_ptr, len);
+                    #box_path::from_raw(::core::mem::transmute::<(*mut u8, usize), *mut Self>(fat_ptr_components))
                 } else {
-                    let __tailextend_mem_ptr = #alloc_path(__tailextend_final_layout);
-                    if __tailextend_mem_ptr.is_null() {
-                        #handle_alloc_error;
+                    let mem_ptr = #alloc_path(final_layout);
+                    if mem_ptr.is_null() {
+                        #handle_alloc_error
                     }
-                    #create_node_raw_ptr_for_non_zst_tokens // Uses `__tailextend_mem_ptr` and `__tailextend_len`
-                };
 
-                #(
-                    ::core::ptr::addr_of_mut!((*__tailextend_node_raw_ptr).#header_field_idents_for_write)
-                        .write(#header_field_idents_for_write);
-                )*
+                    let fat_ptr_components = (mem_ptr, len);
+                    let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>(fat_ptr_components);
 
-                #write_tail_data_call_tokens // Uses `__tailextend_final_layout`, `__tailextend_len`, `__tailextend_node_raw_ptr`, maybe `__tailextend_iter`
+                    #( #header_field_writes )*
 
-                #box_path::from_raw(__tailextend_node_raw_ptr)
+                    #write_tail_data_call_tokens
+
+                    #box_path::from_raw(fat_ptr)
+                }
             }
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn generate_build_method_for_slice(
     builder_args: &MakeDstBuilderArgs,
     struct_name_ident: &Ident,
     field_info: &FieldInfo,
     element_type: &Type,
     input_struct_generics: &Generics,
-    header_layout_calc_tokens: &proc_macro2::TokenStream,
+    header_layout_calc_tokens: &TokenStream,
     offset_of_tail_payload_ident: &Ident,
     layout_header_full_ident: &Ident,
-) -> proc_macro2::TokenStream {
+    unique_tuple_ident: &Ident,
+) -> TokenStream {
     let base_method_name = &builder_args.base_method_name;
-    let tail_field_name_ident_for_access = field_info.tail_field_name_ident; // Used in quoted tokens
+    let tail_field_name_ident_for_access = field_info.tail_field_name_ident;
 
     let method_name_ident = base_method_name.clone();
     let method_doc_string =
-        format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.",);
+        format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.");
 
     let build_fn_tail_param_tokens = quote! { #tail_field_name_ident_for_access: &[#element_type] };
 
@@ -643,67 +636,62 @@ fn generate_build_method_for_slice(
 
     final_where_clause.predicates.push(clone_predicate);
 
-    let build_fn_where_clause_tokens_option = Some(quote! { #final_where_clause });
+    let build_fn_where_clause_tokens = Some(quote! { #final_where_clause });
 
-    let build_fn_tail_processing_tokens =
-        quote! { let __tailextend_len = #tail_field_name_ident_for_access.len(); };
+    let num_header_fields = field_info.header_field_idents.len();
+    let tail_param_tuple_idx = syn::Index::from(num_header_fields);
+
+    let build_fn_tail_processing_tokens = quote! {
+        let len = #unique_tuple_ident.#tail_param_tuple_idx.len();
+    };
 
     let layout_calculation_for_tail_payload_tokens =
         create_array_layout_calculation(element_type, field_info.tail_field.ty.span());
 
     let write_tail_data_call_tokens = quote_spanned! {element_type.span()=>
-        if __tailextend_final_layout.size() > 0 && __tailextend_len > 0 {
-            let __tailextend_dest_slice_data_ptr = ::core::ptr::addr_of_mut!((*__tailextend_node_raw_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
-            for __tailextend_idx in 0..__tailextend_len {
-                let __tailextend_src_val_ref = #tail_field_name_ident_for_access.get_unchecked(__tailextend_idx);
-                #[allow(clippy::clone_on_copy)]
-                let __tailextend_cloned_val = __tailextend_src_val_ref.clone();
-                ::core::ptr::write(__tailextend_dest_slice_data_ptr.add(__tailextend_idx), __tailextend_cloned_val);
-            }
+        let dest_slice_data_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
+        for idx in 0..len {
+            let src_val_ref = #unique_tuple_ident.#tail_param_tuple_idx.get_unchecked(idx);
+            #[allow(clippy::clone_on_copy)]
+            let cloned_val = src_val_ref.clone();
+            ::core::ptr::write(dest_slice_data_ptr.add(idx), cloned_val);
         }
     };
 
-    let (create_node_raw_ptr_for_non_zst_tokens, create_zst_node_raw_ptr_tokens) =
-        create_slice_raw_ptr_tokens(element_type);
-
-    let common_params = CommonBuildParams {
-        method_name_ident: &method_name_ident,
-        build_fn_tail_param_tokens: &build_fn_tail_param_tokens,
-        build_fn_generics_tokens: None,
-        build_fn_where_clause_tokens: build_fn_where_clause_tokens_option.as_ref(),
-        build_fn_tail_processing_tokens: &build_fn_tail_processing_tokens,
-        layout_calculation_for_tail_payload_tokens: &layout_calculation_for_tail_payload_tokens,
-        write_tail_data_call_tokens: &write_tail_data_call_tokens,
-        create_node_raw_ptr_for_non_zst_tokens: &create_node_raw_ptr_for_non_zst_tokens,
-        create_zst_node_raw_ptr_tokens: &create_zst_node_raw_ptr_tokens, // New field
-        method_doc_string: &method_doc_string,
-    };
-
-    generate_common_build_method(
+    generate_build_method_common(CommonBuildParams {
         builder_args,
         field_info,
         header_layout_calc_tokens,
         offset_of_tail_payload_ident,
         layout_header_full_ident,
-        &common_params,
-    )
+        unique_tuple_ident,
+        method_name_ident,
+        build_fn_tail_param_tokens,
+        build_fn_generics_tokens: None,
+        build_fn_where_clause_tokens,
+        build_fn_tail_processing_tokens,
+        layout_calculation_for_tail_payload_tokens,
+        write_tail_data_call_tokens,
+        method_doc_string,
+    })
 }
 
-fn generate_build_from_iter_method_for_slice(
+fn generate_build_method_for_iterator(
     builder_args: &MakeDstBuilderArgs,
     struct_name_ident: &Ident,
     field_info: &FieldInfo,
     element_type: &Type,
-    header_layout_calc_tokens: &proc_macro2::TokenStream,
+    header_layout_calc_tokens: &TokenStream,
     offset_of_tail_payload_ident: &Ident,
     layout_header_full_ident: &Ident,
-) -> proc_macro2::TokenStream {
+    unique_tuple_ident: &Ident,
+) -> TokenStream {
     let base_method_name = &builder_args.base_method_name;
-    let tail_field_name_ident_for_access = field_info.tail_field_name_ident; // Used in quoted tokens
+    let tail_field_name_ident_for_access = field_info.tail_field_name_ident;
 
     let method_name_ident = format_ident!("{}_from_iter", base_method_name);
     let method_doc_string =
-        format!("Creates an instance of `Box<{struct_name_ident}>` from an iterator.",);
+        format!("Creates an instance of `Box<{struct_name_ident}>` from an iterator.");
 
     let iter_generic_param = format_ident!("I");
     let build_fn_tail_param_tokens =
@@ -714,105 +702,93 @@ fn generate_build_from_iter_method_for_slice(
               <#iter_generic_param as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator
     });
 
+    let num_header_fields = field_info.header_field_idents.len();
+    let tail_param_tuple_idx = syn::Index::from(num_header_fields);
+
     let build_fn_tail_processing_tokens = quote! {
-        let mut __tailextend_iter = #tail_field_name_ident_for_access.into_iter();
-        let __tailextend_len = __tailextend_iter.len();
+        let iter = #unique_tuple_ident.#tail_param_tuple_idx.into_iter();
+        let len = iter.len();
     };
 
     let layout_calculation_for_tail_payload_tokens =
         create_array_layout_calculation(element_type, field_info.tail_field.ty.span());
 
     let write_tail_data_call_tokens = quote! {
-        if __tailextend_final_layout.size() > 0 && __tailextend_len > 0 { // final_layout, len, iter are in scope
-            let __tailextend_dest_slice_data_ptr = ::core::ptr::addr_of_mut!((*__tailextend_node_raw_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
-            for (i, element) in __tailextend_iter.enumerate() {
-                 unsafe { ::core::ptr::write(__tailextend_dest_slice_data_ptr.add(i), element); }
-            }
+        let dest_slice_data_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
+        for (i, element) in iter.enumerate() {
+             ::core::ptr::write(dest_slice_data_ptr.add(i), element);
         }
     };
 
-    let (create_node_raw_ptr_for_non_zst_tokens, create_zst_node_raw_ptr_tokens) =
-        create_slice_raw_ptr_tokens(element_type);
-
-    let common_params = CommonBuildParams {
-        method_name_ident: &method_name_ident,
-        build_fn_tail_param_tokens: &build_fn_tail_param_tokens,
-        build_fn_generics_tokens: build_fn_generics_tokens.as_ref(),
-        build_fn_where_clause_tokens: build_fn_where_clause_tokens.as_ref(),
-        build_fn_tail_processing_tokens: &build_fn_tail_processing_tokens,
-        layout_calculation_for_tail_payload_tokens: &layout_calculation_for_tail_payload_tokens,
-        write_tail_data_call_tokens: &write_tail_data_call_tokens,
-        create_node_raw_ptr_for_non_zst_tokens: &create_node_raw_ptr_for_non_zst_tokens,
-        create_zst_node_raw_ptr_tokens: &create_zst_node_raw_ptr_tokens,
-        method_doc_string: &method_doc_string,
-    };
-
-    generate_common_build_method(
+    generate_build_method_common(CommonBuildParams {
         builder_args,
         field_info,
         header_layout_calc_tokens,
         offset_of_tail_payload_ident,
         layout_header_full_ident,
-        &common_params,
-    )
+        unique_tuple_ident,
+        method_name_ident,
+        build_fn_tail_param_tokens,
+        build_fn_generics_tokens,
+        build_fn_where_clause_tokens,
+        build_fn_tail_processing_tokens,
+        layout_calculation_for_tail_payload_tokens,
+        write_tail_data_call_tokens,
+        method_doc_string,
+    })
 }
 
 fn generate_build_method_for_str(
     builder_args: &MakeDstBuilderArgs,
     struct_name_ident: &Ident,
     field_info: &FieldInfo,
-    header_layout_calc_tokens: &proc_macro2::TokenStream,
+    header_layout_calc_tokens: &TokenStream,
     offset_of_tail_payload_ident: &Ident,
     layout_header_full_ident: &Ident,
-) -> proc_macro2::TokenStream {
+    unique_tuple_ident: &Ident,
+) -> TokenStream {
     let base_method_name = &builder_args.base_method_name;
-    let tail_field_name_ident_for_access = field_info.tail_field_name_ident; // Used in quoted tokens
+    let tail_field_name_ident_for_access = field_info.tail_field_name_ident;
 
     let method_name_ident = base_method_name.clone();
     let method_doc_string =
-        format!("Creates an instance of `Box<{struct_name_ident}>` from a string slice.",);
+        format!("Creates an instance of `Box<{struct_name_ident}>` from a string slice.");
 
     let build_fn_tail_param_tokens =
         quote! { #tail_field_name_ident_for_access: impl ::core::convert::AsRef<str> };
+
+    let num_header_fields = field_info.header_field_idents.len();
+    let tail_param_tuple_idx = syn::Index::from(num_header_fields);
+
     let build_fn_tail_processing_tokens = quote! {
-        let __tailextend_s = #tail_field_name_ident_for_access.as_ref();
-        let __tailextend_len = __tailextend_s.len();
+        let s = #unique_tuple_ident.#tail_param_tuple_idx.as_ref();
+        let len = s.len();
     };
 
     let layout_calculation_for_tail_payload_tokens =
         create_array_layout_calculation(&quote! { u8 }, field_info.tail_field.ty.span());
 
     let write_tail_data_call_tokens = quote! {
-        if __tailextend_final_layout.size() > 0 && __tailextend_len > 0 { // final_layout and len are in scope
-            let __tailextend_dest_str_data_ptr = ::core::ptr::addr_of_mut!((*__tailextend_node_raw_ptr).#tail_field_name_ident_for_access) as *mut u8;
-            ::core::ptr::copy_nonoverlapping(__tailextend_s.as_ptr(), __tailextend_dest_str_data_ptr, __tailextend_len);
-        }
+        let dest_str_data_ptr = (&raw mut (*fat_ptr).#tail_field_name_ident_for_access).cast::<u8>();
+        ::core::ptr::copy_nonoverlapping(s.as_ptr(), dest_str_data_ptr, len);
     };
 
-    let (create_node_raw_ptr_for_non_zst_tokens, create_zst_node_raw_ptr_tokens) =
-        create_str_raw_ptr_tokens();
-
-    let common_params = CommonBuildParams {
-        method_name_ident: &method_name_ident,
-        build_fn_tail_param_tokens: &build_fn_tail_param_tokens,
-        build_fn_generics_tokens: None,
-        build_fn_where_clause_tokens: None,
-        build_fn_tail_processing_tokens: &build_fn_tail_processing_tokens,
-        layout_calculation_for_tail_payload_tokens: &layout_calculation_for_tail_payload_tokens,
-        write_tail_data_call_tokens: &write_tail_data_call_tokens,
-        create_node_raw_ptr_for_non_zst_tokens: &create_node_raw_ptr_for_non_zst_tokens,
-        create_zst_node_raw_ptr_tokens: &create_zst_node_raw_ptr_tokens,
-        method_doc_string: &method_doc_string,
-    };
-
-    generate_common_build_method(
+    generate_build_method_common(CommonBuildParams {
         builder_args,
         field_info,
         header_layout_calc_tokens,
         offset_of_tail_payload_ident,
         layout_header_full_ident,
-        &common_params,
-    )
+        unique_tuple_ident,
+        method_name_ident,
+        build_fn_tail_param_tokens,
+        build_fn_generics_tokens: None,
+        build_fn_where_clause_tokens: None,
+        build_fn_tail_processing_tokens,
+        layout_calculation_for_tail_payload_tokens,
+        write_tail_data_call_tokens,
+        method_doc_string,
+    })
 }
 
 /// Generate builder methods for dynamically sized types (DST) structs.
@@ -827,7 +803,6 @@ fn generate_build_method_for_str(
 /// ```ignore
 /// #[make_dst_builder(<base_method_name>[, <visibility>] [, no_std])]
 /// ```
-///
 /// Refer to the [crate-level documentation](crate) for more details and example uses.
 ///
 /// # Usage
@@ -849,15 +824,18 @@ fn generate_build_method_for_str(
 /// }
 /// ```
 #[proc_macro_attribute]
-pub fn make_dst_builder(attr_args_ts: TokenStream, item_ts: TokenStream) -> TokenStream {
+pub fn make_dst_builder(
+    attr_args_ts: proc_macro::TokenStream,
+    item_ts: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
     let result = make_dst_builder_impl(attr_args_ts.into(), item_ts.into());
     result.unwrap_or_else(|err| err.to_compile_error()).into()
 }
 
 fn make_dst_builder_impl(
-    attr_args_ts: proc_macro2::TokenStream,
-    item_ts: proc_macro2::TokenStream,
-) -> SynResult<proc_macro2::TokenStream> {
+    attr_args_ts: TokenStream,
+    item_ts: TokenStream,
+) -> SynResult<TokenStream> {
     let builder_args = if attr_args_ts.is_empty() {
         MakeDstBuilderArgs {
             visibility: Visibility::Inherited,
@@ -878,12 +856,29 @@ fn make_dst_builder_impl(
     let header_layout_calc_tokens =
         generate_header_layout_code(&field_info.header_field_structs, struct_generics);
 
-    let mut generated_build_methods: Vec<proc_macro2::TokenStream> = Vec::new();
-    let offset_of_tail_payload_ident = format_ident!(
-        "__tailextend_offset_of_{}_payload",
-        field_info.tail_field_name_ident
+    let mut generated_build_methods: Vec<TokenStream> = Vec::new();
+    let offset_of_tail_payload_ident =
+        format_ident!("offset_of_{}_payload", field_info.tail_field_name_ident);
+    let layout_header_full_ident = format_ident!("layout_header_full");
+
+    // Collect incoming argument names from the signature to avoid collision for the tuple variable
+    let mut arg_names_for_collision_check = field_info
+        .header_field_idents
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect::<HashSet<String>>();
+    arg_names_for_collision_check.insert(field_info.tail_field_name_ident.to_string());
+
+    // Generate a unique name for the tuple (e.g., a, aa, aaa)
+    let mut generated_tuple_name_str = "a".to_string();
+    while arg_names_for_collision_check.contains(&generated_tuple_name_str) {
+        generated_tuple_name_str.push('a');
+    }
+    let unique_tuple_ident = format_ident!(
+        "{}",
+        generated_tuple_name_str,
+        span = proc_macro2::Span::call_site()
     );
-    let layout_header_full_ident = format_ident!("__tailextend_layout_header_full");
 
     match &field_info.tail_field.ty {
         Type::Slice(TypeSlice { elem, .. }) => {
@@ -896,8 +891,9 @@ fn make_dst_builder_impl(
                 &header_layout_calc_tokens,
                 &offset_of_tail_payload_ident,
                 &layout_header_full_ident,
+                &unique_tuple_ident, // Pass generated ident
             ));
-            generated_build_methods.push(generate_build_from_iter_method_for_slice(
+            generated_build_methods.push(generate_build_method_for_iterator(
                 &builder_args,
                 struct_name_ident,
                 &field_info,
@@ -905,6 +901,7 @@ fn make_dst_builder_impl(
                 &header_layout_calc_tokens,
                 &offset_of_tail_payload_ident,
                 &layout_header_full_ident,
+                &unique_tuple_ident, // Pass generated ident
             ));
         }
         _ => {
@@ -915,6 +912,7 @@ fn make_dst_builder_impl(
                 &header_layout_calc_tokens,
                 &offset_of_tail_payload_ident,
                 &layout_header_full_ident,
+                &unique_tuple_ident, // Pass generated ident
             ));
         }
     }

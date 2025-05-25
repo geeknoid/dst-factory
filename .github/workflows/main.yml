@@ -1,0 +1,86 @@
+name: main
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Install cargo-hack
+        run: cargo install cargo-hack
+      - name: Build
+        run: cargo hack build --each-feature --verbose
+      - name: Tests
+        run: cargo test --verbose
+      - name: Doc Tests
+        run: cargo test --doc --verbose
+      - name: Delete Cargo.lock
+        run: rm Cargo.lock
+      - name: Publish Dry-Run
+        run: cargo publish -p frozen-collections-core --dry-run
+
+  analysis:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - name: Install Rust Nightly
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: miri
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Audit
+        run: cargo audit
+      - name: Format
+        run: cargo fmt -- --check
+      - name: Docs
+        run: RUSTDOCFLAGS='--deny warnings' cargo doc --no-deps --all-features
+      - name: Miri
+        run: cargo +nightly miri test --all-features --workspace
+
+  coverage:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Generate code coverage
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
+          files: lcov.info
+          fail_ci_if_error: true

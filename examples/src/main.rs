@@ -1,5 +1,3 @@
-//#![no_std]
-
 use tail_extend::make_dst_builder;
 
 #[make_dst_builder(new, pub(crate))]
@@ -11,7 +9,7 @@ struct User {
 #[make_dst_builder]
 struct Credential {
     ttl: u32,
-    key: [u8],
+    key: [u16],
 }
 
 fn main() {
