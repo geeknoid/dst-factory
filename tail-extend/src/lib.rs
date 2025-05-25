@@ -513,7 +513,7 @@ fn generate_header_layout_code(
         helper_fields_definitions.push(quote_spanned!(field.span()=> #field_ident: #field_ty));
     }
 
-    quote_spanned! {helper_struct_name.span()=>
+    quote_spanned! {helper_struct_name.span() =>
         #[allow(dead_code)]
         struct #helper_struct_name #helper_impl_generics #helper_where_clause_for_impl {
             #( #helper_fields_definitions ),*
@@ -583,7 +583,7 @@ fn generate_common_build_method(
             let (__tailextend_full_node_layout_val, #offset_of_tail_payload_ident) = #layout_header_full_ident
                 .extend(__tailextend_layout_tail_payload)
                 .expect("Overflow in memory layout calculation");
-            let __tailextend_final_layout = __tailextend_full_node_layout_val.pad_to_align();
+            let __tailextend_final_layout = __tailextend_full_node_layout_val;
 
             unsafe {
                 let __tailextend_node_raw_ptr: *mut Self = if __tailextend_final_layout.size() == 0 {
