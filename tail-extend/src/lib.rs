@@ -120,12 +120,10 @@ use std::collections::HashSet;
 use syn::parse::discouraged::Speculative;
 use syn::token::Where;
 use syn::{
-    Field, Fields, GenericParam, Generics, Ident, ItemStruct, Lifetime, Token, Type, TypePath,
-    TypeSlice, Visibility,
+    Field, Fields, Generics, Ident, ItemStruct, Token, Type, TypePath, TypeSlice, Visibility,
     parse::{Parse, ParseStream, Result as SynResult},
     punctuated::Punctuated,
     spanned::Spanned,
-    visit::{self, Visit},
 };
 
 struct MakeDstBuilderArgs {
@@ -198,14 +196,11 @@ struct FieldInfo<'a> {
     tail_field_name_ident: &'a Ident,
 }
 
-// --- Helper Struct for Common Build Method Parameters ---
 struct CommonBuildParams<'a> {
     builder_args: &'a MakeDstBuilderArgs,
     field_info: &'a FieldInfo<'a>,
     header_layout_calc_tokens: &'a TokenStream,
-    offset_of_tail_payload_ident: &'a Ident,
-    layout_header_full_ident: &'a Ident,
-    unique_tuple_ident: &'a Ident, // Added field
+    unique_tuple_ident: &'a Ident,
     method_name_ident: Ident,
     build_fn_tail_param_tokens: TokenStream,
     build_fn_generics_tokens: Option<TokenStream>,
@@ -221,78 +216,7 @@ fn create_array_layout_calculation<T: quote::ToTokens>(
     element_type: &T,
     span: proc_macro2::Span,
 ) -> TokenStream {
-    quote_spanned! {span=>
-        let layout_tail_payload =
-            ::core::alloc::Layout::array::<#element_type>(len)
-                .expect("Array exceeds maximum size allowed of isize::MAX");
-    }
-}
-
-#[derive(Default)]
-struct UsedGenericParams {
-    lifetimes: HashSet<Lifetime>,
-    types: HashSet<Ident>,
-    consts: HashSet<Ident>,
-}
-
-struct GenericUsageVisitor<'a> {
-    // Parameters defined on the original struct
-    defined_lifetimes: &'a HashSet<Lifetime>,
-    defined_type_param_idents: &'a HashSet<Ident>,
-    defined_const_param_idents: &'a HashSet<Ident>,
-    // Parameters found to be used
-    used_params: UsedGenericParams,
-}
-
-impl<'a> GenericUsageVisitor<'a> {
-    fn new(
-        defined_lifetimes: &'a HashSet<Lifetime>,
-        defined_type_param_idents: &'a HashSet<Ident>,
-        defined_const_param_idents: &'a HashSet<Ident>,
-    ) -> Self {
-        Self {
-            defined_lifetimes,
-            defined_type_param_idents,
-            defined_const_param_idents,
-            used_params: UsedGenericParams::default(),
-        }
-    }
-}
-
-impl<'ast> Visit<'ast> for GenericUsageVisitor<'_> {
-    fn visit_expr(&mut self, ex: &'ast syn::Expr) {
-        if let syn::Expr::Path(expr_path) = ex {
-            if expr_path.qself.is_none() && expr_path.path.segments.len() == 1 {
-                let ident = &expr_path.path.segments[0].ident;
-                if self.defined_const_param_idents.contains(ident) {
-                    self.used_params.consts.insert(ident.clone());
-                }
-            }
-        }
-        visit::visit_expr(self, ex); // Default traversal
-    }
-
-    fn visit_lifetime(&mut self, l: &'ast Lifetime) {
-        if self.defined_lifetimes.contains(l) {
-            self.used_params.lifetimes.insert(l.clone());
-        }
-    }
-
-    fn visit_path(&mut self, path: &'ast syn::Path) {
-        // Check for type or const params used as path segments
-        if path.leading_colon.is_none() && path.segments.len() == 1 {
-            let ident = &path.segments[0].ident;
-            if self.defined_type_param_idents.contains(ident) {
-                self.used_params.types.insert(ident.clone());
-            } else if self.defined_const_param_idents.contains(ident) {
-                self.used_params.consts.insert(ident.clone());
-            }
-        }
-        // Visit generic arguments within the path, like `Vec<T>`
-        for segment in &path.segments {
-            self.visit_path_arguments(&segment.arguments);
-        }
-    }
+    quote_spanned! { span => ::core::alloc::Layout::array::<#element_type>(len).expect("Array exceeds maximum size allowed of isize::MAX") }
 }
 
 // --- Helper Functions ---
@@ -363,134 +287,22 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
     }
 }
 
-#[expect(clippy::too_many_lines)]
-fn generate_header_layout_code(
-    header_field_structs: &[&Field],
-    input_struct_generics: &Generics,
-) -> TokenStream {
-    let layout_header_full_ident = format_ident!("layout_header_full");
-    let helper_struct_name = format_ident!("PrefixLayoutHelper");
+fn generate_header_layout_code(header_field_structs: &[&Field]) -> TokenStream {
+    let mut layout_construction_tokens = quote! {
+        let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
+    };
 
-    if header_field_structs.is_empty() {
-        return quote! {
-            let #layout_header_full_ident = ::core::alloc::Layout::new::<()>();
-        };
-    }
-
-    // 1. Collect all defined generic parameters from the input struct
-    let mut defined_lifetimes = HashSet::new();
-    let mut defined_type_param_idents = HashSet::new();
-    let mut defined_const_param_idents = HashSet::new();
-
-    for param in &input_struct_generics.params {
-        match param {
-            GenericParam::Lifetime(lt) => {
-                defined_lifetimes.insert(lt.lifetime.clone());
-            }
-            GenericParam::Type(tp) => {
-                defined_type_param_idents.insert(tp.ident.clone());
-            }
-            GenericParam::Const(cp) => {
-                defined_const_param_idents.insert(cp.ident.clone());
-            }
-        }
-    }
-
-    // 2. Determine which generic parameters are used by the header fields
-    let mut overall_used_params = UsedGenericParams::default();
+    // Extend layout for each field.
     for field in header_field_structs {
-        let mut visitor = GenericUsageVisitor::new(
-            &defined_lifetimes,
-            &defined_type_param_idents,
-            &defined_const_param_idents,
-        );
-        visitor.visit_type(&field.ty);
-        overall_used_params
-            .lifetimes
-            .extend(visitor.used_params.lifetimes);
-        overall_used_params.types.extend(visitor.used_params.types);
-        overall_used_params
-            .consts
-            .extend(visitor.used_params.consts);
-    }
-
-    // 3. Construct generics for the helper struct (only used params)
-    let mut helper_generics = Generics::default();
-    for param in &input_struct_generics.params {
-        match param {
-            GenericParam::Lifetime(lt_def)
-                if overall_used_params.lifetimes.contains(&lt_def.lifetime) =>
-            {
-                helper_generics.params.push(param.clone());
-            }
-            GenericParam::Type(ty_param) if overall_used_params.types.contains(&ty_param.ident) => {
-                helper_generics.params.push(param.clone());
-            }
-            GenericParam::Const(cn_param)
-                if overall_used_params.consts.contains(&cn_param.ident) =>
-            {
-                helper_generics.params.push(param.clone());
-            }
-            _ => {} // Param not used in header
-        }
-    }
-
-    // 4. Filter the where clause for the helper struct
-    if let Some(input_where_clause) = &input_struct_generics.where_clause {
-        let mut helper_where_clause = syn::WhereClause {
-            where_token: input_where_clause.where_token,
-            predicates: Punctuated::new(),
-        };
-        for predicate in &input_where_clause.predicates {
-            let mut predicate_visitor = GenericUsageVisitor::new(
-                &defined_lifetimes,
-                &defined_type_param_idents,
-                &defined_const_param_idents,
-            );
-            visit::visit_where_predicate(&mut predicate_visitor, predicate);
-
-            let is_relevant = predicate_visitor
-                .used_params
-                .lifetimes
-                .is_subset(&overall_used_params.lifetimes)
-                && predicate_visitor
-                    .used_params
-                    .types
-                    .is_subset(&overall_used_params.types)
-                && predicate_visitor
-                    .used_params
-                    .consts
-                    .is_subset(&overall_used_params.consts);
-
-            if is_relevant {
-                helper_where_clause.predicates.push(predicate.clone());
-            }
-        }
-        if !helper_where_clause.predicates.is_empty() {
-            helper_generics.where_clause = Some(helper_where_clause);
-        }
-    }
-
-    let (helper_impl_generics, helper_ty_generics, helper_where_clause_for_impl) =
-        helper_generics.split_for_impl();
-
-    let mut helper_fields_definitions = Vec::new();
-    for field in header_field_structs {
-        let field_ident = field.ident.as_ref().unwrap();
         let field_ty = &field.ty;
-        helper_fields_definitions.push(quote_spanned!(field.span()=> #field_ident: #field_ty));
+        let field_span = field_ty.span();
+        layout_construction_tokens.extend(quote_spanned! {field_span =>
+            let layout = layout.extend(::core::alloc::Layout::new::<#field_ty>()).unwrap().0;
+        });
     }
 
-    quote_spanned! {helper_struct_name.span() =>
-        #[allow(dead_code)]
-        struct #helper_struct_name #helper_impl_generics #helper_where_clause_for_impl {
-            #( #helper_fields_definitions ),*
-        }
-        let #layout_header_full_ident = ::core::alloc::Layout::new::<#helper_struct_name #helper_ty_generics>();
-    }
+    layout_construction_tokens
 }
-
-// --- Unified Build Method Generation ---
 
 fn generate_build_method_common(common_params: CommonBuildParams) -> TokenStream {
     let CommonBuildParams {
@@ -508,9 +320,7 @@ fn generate_build_method_common(common_params: CommonBuildParams) -> TokenStream
                 ..
             },
         header_layout_calc_tokens,
-        offset_of_tail_payload_ident,
-        layout_header_full_ident,
-        unique_tuple_ident, // Destructure the new field
+        unique_tuple_ident,
         method_name_ident,
         build_fn_tail_param_tokens,
         build_fn_generics_tokens,
@@ -531,7 +341,7 @@ fn generate_build_method_common(common_params: CommonBuildParams) -> TokenStream
         (
             quote! { ::std::boxed::Box },
             quote! { ::std::alloc::alloc },
-            quote! { ::std::alloc::handle_alloc_error(final_layout) },
+            quote! { ::std::alloc::handle_alloc_error(layout) },
         )
     };
 
@@ -551,9 +361,7 @@ fn generate_build_method_common(common_params: CommonBuildParams) -> TokenStream
             .enumerate()
             .map(|(idx, field_ident_on_struct)| {
                 let tuple_idx = syn::Index::from(idx);
-                quote! {
-                    ::core::ptr::write(&mut ((*fat_ptr).#field_ident_on_struct), #unique_tuple_ident.#tuple_idx);
-                }
+                quote! { ::core::ptr::write(&mut ((*fat_ptr).#field_ident_on_struct), #unique_tuple_ident.#tuple_idx);}
             });
 
     quote! {
@@ -571,19 +379,17 @@ fn generate_build_method_common(common_params: CommonBuildParams) -> TokenStream
             #build_fn_tail_processing_tokens
 
             #header_layout_calc_tokens
-            #layout_calculation_for_tail_payload_tokens
 
-            let (final_layout, #offset_of_tail_payload_ident) = #layout_header_full_ident
-                .extend(layout_tail_payload)
-                .expect("Struct exceeds maximum size allowed of isize::MAX");
+            let layout = layout.extend(#layout_calculation_for_tail_payload_tokens).expect("Struct exceeds maximum size allowed of isize::MAX").0;
+            let layout = layout.pad_to_align();
 
             unsafe {
-                if final_layout.size() == 0 {
+                if layout.size() == 0 {
                     let data_ptr = ::core::ptr::NonNull::<u8>::dangling().as_ptr();
                     let fat_ptr_components = (data_ptr, len);
                     #box_path::from_raw(::core::mem::transmute::<(*mut u8, usize), *mut Self>(fat_ptr_components))
                 } else {
-                    let mem_ptr = #alloc_path(final_layout);
+                    let mem_ptr = #alloc_path(layout);
                     if mem_ptr.is_null() {
                         #handle_alloc_error
                     }
@@ -609,8 +415,6 @@ fn generate_build_method_for_slice(
     element_type: &Type,
     input_struct_generics: &Generics,
     header_layout_calc_tokens: &TokenStream,
-    offset_of_tail_payload_ident: &Ident,
-    layout_header_full_ident: &Ident,
     unique_tuple_ident: &Ident,
 ) -> TokenStream {
     let base_method_name = &builder_args.base_method_name;
@@ -662,8 +466,6 @@ fn generate_build_method_for_slice(
         builder_args,
         field_info,
         header_layout_calc_tokens,
-        offset_of_tail_payload_ident,
-        layout_header_full_ident,
         unique_tuple_ident,
         method_name_ident,
         build_fn_tail_param_tokens,
@@ -682,8 +484,6 @@ fn generate_build_method_for_iterator(
     field_info: &FieldInfo,
     element_type: &Type,
     header_layout_calc_tokens: &TokenStream,
-    offset_of_tail_payload_ident: &Ident,
-    layout_header_full_ident: &Ident,
     unique_tuple_ident: &Ident,
 ) -> TokenStream {
     let base_method_name = &builder_args.base_method_name;
@@ -724,8 +524,6 @@ fn generate_build_method_for_iterator(
         builder_args,
         field_info,
         header_layout_calc_tokens,
-        offset_of_tail_payload_ident,
-        layout_header_full_ident,
         unique_tuple_ident,
         method_name_ident,
         build_fn_tail_param_tokens,
@@ -743,8 +541,6 @@ fn generate_build_method_for_str(
     struct_name_ident: &Ident,
     field_info: &FieldInfo,
     header_layout_calc_tokens: &TokenStream,
-    offset_of_tail_payload_ident: &Ident,
-    layout_header_full_ident: &Ident,
     unique_tuple_ident: &Ident,
 ) -> TokenStream {
     let base_method_name = &builder_args.base_method_name;
@@ -777,8 +573,6 @@ fn generate_build_method_for_str(
         builder_args,
         field_info,
         header_layout_calc_tokens,
-        offset_of_tail_payload_ident,
-        layout_header_full_ident,
         unique_tuple_ident,
         method_name_ident,
         build_fn_tail_param_tokens,
@@ -853,13 +647,9 @@ fn make_dst_builder_impl(
 
     let field_info = extract_field_info(&input_struct)?;
 
-    let header_layout_calc_tokens =
-        generate_header_layout_code(&field_info.header_field_structs, struct_generics);
+    let header_layout_calc_tokens = generate_header_layout_code(&field_info.header_field_structs);
 
     let mut generated_build_methods: Vec<TokenStream> = Vec::new();
-    let offset_of_tail_payload_ident =
-        format_ident!("offset_of_{}_payload", field_info.tail_field_name_ident);
-    let layout_header_full_ident = format_ident!("layout_header_full");
 
     // Collect incoming argument names from the signature to avoid collision for the tuple variable
     let mut arg_names_for_collision_check = field_info
@@ -889,19 +679,16 @@ fn make_dst_builder_impl(
                 elem,
                 struct_generics,
                 &header_layout_calc_tokens,
-                &offset_of_tail_payload_ident,
-                &layout_header_full_ident,
-                &unique_tuple_ident, // Pass generated ident
+                &unique_tuple_ident,
             ));
+
             generated_build_methods.push(generate_build_method_for_iterator(
                 &builder_args,
                 struct_name_ident,
                 &field_info,
                 elem,
                 &header_layout_calc_tokens,
-                &offset_of_tail_payload_ident,
-                &layout_header_full_ident,
-                &unique_tuple_ident, // Pass generated ident
+                &unique_tuple_ident,
             ));
         }
         _ => {
@@ -910,9 +697,7 @@ fn make_dst_builder_impl(
                 struct_name_ident,
                 &field_info,
                 &header_layout_calc_tokens,
-                &offset_of_tail_payload_ident,
-                &layout_header_full_ident,
-                &unique_tuple_ident, // Pass generated ident
+                &unique_tuple_ident,
             ));
         }
     }
@@ -924,6 +709,7 @@ fn make_dst_builder_impl(
     };
 
     let expanded = quote! {
+        #[repr(C)]
         #input_struct
         #build_methods_impl_block
     };

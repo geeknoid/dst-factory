@@ -35,15 +35,10 @@ error[E0277]: the size for values of type `str` cannot be known at compilation t
 3 | #[make_dst_builder]
   | ^^^^^^^^^^^^^^^^^^^ doesn't have a size known at compile-time
   |
-  = help: within `PrefixLayoutHelper`, the trait `Sized` is not implemented for `str`
-note: required because it appears within the type `PrefixLayoutHelper`
- --> tests/ui/multiple_dst_fields.rs:3:1
+  = help: the trait `Sized` is not implemented for `str`
+note: required by an implicit `Sized` bound in `std::ptr::write`
+ --> $RUST/core/src/ptr/mod.rs
   |
-3 | #[make_dst_builder]
-  | ^^^^^^^^^^^^^^^^^^^
-note: required by an implicit `Sized` bound in `Layout::new`
- --> $RUST/core/src/alloc/layout.rs
-  |
-  |     pub const fn new<T>() -> Self {
-  |                      ^ required by the implicit `Sized` requirement on this type parameter in `Layout::new`
+  | pub const unsafe fn write<T>(dst: *mut T, src: T) {
+  |                           ^ required by the implicit `Sized` requirement on this type parameter in `write`
   = note: this error originates in the attribute macro `make_dst_builder` (in Nightly builds, run with -Z macro-backtrace for more info)

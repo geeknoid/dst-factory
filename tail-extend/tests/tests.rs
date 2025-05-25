@@ -5,38 +5,40 @@ use tail_extend::make_dst_builder;
 // Test 1: Basic functionality with str field
 #[make_dst_builder(basic_str_builder)]
 struct BasicStrStruct {
-    id: u32,
+    id: usize,
     text_data: str,
 }
 
 #[test]
 fn test_basic_str_usage() {
-    let instance: Box<BasicStrStruct> =
-        BasicStrStruct::basic_str_builder(101, "hello dynamic world");
-    assert_eq!(instance.id, 101);
-    assert_eq!(&instance.text_data, "hello dynamic world");
+    for i in 0..64 {
+        let s = ".".repeat(i);
+
+        let instance: Box<BasicStrStruct> = BasicStrStruct::basic_str_builder(i, s.as_str());
+
+        assert_eq!(instance.id, i);
+        assert_eq!(&instance.text_data, s.as_str());
+    }
 }
 
 // Test 2: Basic functionality with slice field and generics
 #[make_dst_builder(basic_slice_builder)]
 struct BasicSliceStruct<T> {
-    item_count: usize,
+    id: usize,
     elements: [T],
 }
 
 #[test]
 fn test_basic_slice_usage() {
-    let u8_data: &[u8] = &[10, 20, 30, 40];
-    let instance_u8: Box<BasicSliceStruct<u8>> =
-        BasicSliceStruct::basic_slice_builder(u8_data.len(), u8_data);
-    assert_eq!(instance_u8.item_count, 4);
-    assert_eq!(&instance_u8.elements, u8_data);
+    for i in 0..64 {
+        let v = vec!['*'; i];
 
-    let string_data: &[&str] = &["a", "b", "c"];
-    let instance_str_slice: Box<BasicSliceStruct<&str>> =
-        BasicSliceStruct::basic_slice_builder(string_data.len(), string_data);
-    assert_eq!(instance_str_slice.item_count, 3);
-    assert_eq!(&instance_str_slice.elements, string_data);
+        let instance: Box<BasicSliceStruct<char>> =
+            BasicSliceStruct::basic_slice_builder(i, v.as_slice());
+
+        assert_eq!(instance.id, i);
+        assert_eq!(&instance.elements, v.as_slice());
+    }
 }
 
 // Test 3: Custom public builder name
@@ -215,7 +217,7 @@ fn test_empty_dst_slice_data() {
     let empty_u16_data: &[u16] = &[];
     let instance: Box<BasicSliceStruct<u16>> =
         BasicSliceStruct::basic_slice_builder(empty_u16_data.len(), empty_u16_data);
-    assert_eq!(instance.item_count, 0);
+    assert_eq!(instance.id, 0);
     assert!(instance.elements.is_empty());
     assert_eq!(&instance.elements, empty_u16_data);
 }
@@ -243,13 +245,16 @@ fn test_zst_slice_dst() {
     assert_eq!(instance.metadata, 0xAB_CDEF);
     assert_eq!(instance.unit_slice.len(), 4);
 }
+
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_no_std() {
     let t = trybuild::TestCases::new();
     t.pass("tests/ui/no_std.rs");
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_error_paths() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/string_in_attribute.rs");
