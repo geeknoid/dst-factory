@@ -110,136 +110,39 @@
 //! - The last field of the struct is not a slice (`[T]`) or a string (`str`).
 //! - The arguments are malformed (e.g., incorrect visibility keyword, too many arguments).
 
-#![allow(clippy::too_many_arguments)]
-
 extern crate proc_macro;
+mod macro_args;
 
+use macro_args::MacroArgs;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
 use std::collections::HashSet;
-use syn::parse::discouraged::Speculative;
 use syn::token::Where;
 use syn::{
-    Field, Fields, Generics, Ident, ItemStruct, Token, Type, TypePath, TypeSlice, Visibility,
-    parse::{Parse, ParseStream, Result as SynResult},
-    punctuated::Punctuated,
-    spanned::Spanned,
+    Field, Fields, Ident, ItemStruct, Type, TypePath, TypeSlice, parse::Result as SynResult,
+    punctuated::Punctuated, spanned::Spanned,
 };
 
-struct MakeDstBuilderArgs {
-    visibility: Visibility,
-    base_method_name: Ident,
-    no_std: bool,
-}
-
-impl Parse for MakeDstBuilderArgs {
-    fn parse(input: ParseStream) -> SynResult<Self> {
-        let mut result = Self {
-            visibility: Visibility::Inherited,
-            base_method_name: Ident::new("build", input.span()),
-            no_std: false,
-        };
-
-        // Check for method name
-        if input.peek(syn::Ident) {
-            let ahead = input.fork();
-            let ident = ahead.parse::<Ident>()?;
-            if ident != "no_std" && ident != "pub" {
-                result.base_method_name = ident;
-
-                input.advance_to(&ahead);
-                if !input.is_empty() {
-                    input
-                        .parse::<Token![,]>()
-                        .map_err(|_| input.error("Expected comma after method name"))?;
-                }
-            }
-        }
-
-        // Check for visibility
-        if input.peek(Token![pub]) {
-            result.visibility = input
-                .parse()
-                .map_err(|_| input.error("Failed to parse visibility"))?;
-
-            if !input.is_empty() {
-                input
-                    .parse::<Token![,]>()
-                    .map_err(|_| input.error("Expected comma after visibility"))?;
-            }
-        }
-
-        // Check for no_std
-        if input.peek(syn::Ident) {
-            let ahead = input.fork();
-            let ident = ahead.parse::<Ident>()?;
-            if ident == "no_std" {
-                result.no_std = true;
-                input.advance_to(&ahead);
-            }
-        }
-
-        if input.is_empty() {
-            Ok(result)
-        } else {
-            Err(input.error("Unexpected input"))
-        }
-    }
-}
-
-// --- Helper Structs for Extracted Information ---
 struct FieldInfo<'a> {
-    header_field_structs: Vec<&'a Field>,
-    header_field_idents: Vec<&'a Ident>,
-    build_fn_header_params: Vec<TokenStream>,
+    header_fields: Box<[&'a Field]>,
+    header_field_idents: Box<[&'a Ident]>,
+    build_fn_header_params_tokens: Box<[TokenStream]>,
     tail_field: &'a Field,
     tail_field_name_ident: &'a Ident,
 }
 
-struct CommonBuildParams<'a> {
-    builder_args: &'a MakeDstBuilderArgs,
-    field_info: &'a FieldInfo<'a>,
-    header_layout_calc_tokens: &'a TokenStream,
-    unique_tuple_ident: &'a Ident,
-    method_name_ident: Ident,
-    build_fn_tail_param_tokens: TokenStream,
-    build_fn_generics_tokens: Option<TokenStream>,
-    build_fn_where_clause_tokens: Option<TokenStream>,
-    build_fn_tail_processing_tokens: TokenStream,
-    layout_calculation_for_tail_payload_tokens: TokenStream,
-    write_tail_data_call_tokens: TokenStream,
-    method_doc_string: String,
-}
-
-// --- Helper for array/slice layout calculations ---
-fn create_array_layout_calculation<T: quote::ToTokens>(
-    element_type: &T,
-    span: proc_macro2::Span,
-) -> TokenStream {
-    quote_spanned! { span => ::core::alloc::Layout::array::<#element_type>(len).expect("Array exceeds maximum size allowed of isize::MAX") }
-}
-
-// --- Helper Functions ---
-
 fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
-    let mut header_field_structs: Vec<&Field> = Vec::new();
-    let mut header_field_idents: Vec<&Ident> = Vec::new();
-    let mut build_fn_header_params: Vec<TokenStream> = Vec::new();
-
-    let tail_field: &Field;
-    let tail_field_name_ident: &Ident;
-
     match &input_struct.fields {
-        Fields::Named(fields_named) => {
-            if fields_named.named.is_empty() {
+        Fields::Named(named_fields) => {
+            if named_fields.named.is_empty() {
                 return Err(syn::Error::new_spanned(
-                    fields_named,
+                    named_fields,
                     "Struct must have at least one field",
                 ));
             }
 
             // Split fields into header fields (all but last) and the tail field (last)
-            let mut fields_iter = fields_named.named.iter();
+            let mut fields_iter = named_fields.named.iter();
             let last_field = fields_iter.next_back().unwrap(); // Safe because we checked for emptiness above
 
             // Verify the last field is a DST with unsized type [T] or str
@@ -259,27 +162,33 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
                 }
             };
 
-            let num_fields = fields_named.named.len();
-            for (i, field) in fields_named.named.iter().enumerate() {
+            let mut header_fields = Vec::new();
+            let mut header_field_idents = Vec::new();
+            let mut build_fn_header_params_tokens = Vec::new();
+
+            let num_fields = named_fields.named.len();
+            for (i, field) in named_fields.named.iter().enumerate() {
                 if i < num_fields - 1 {
-                    header_field_structs.push(field);
+                    header_fields.push(field);
                     let field_ident = field.ident.as_ref().unwrap();
                     header_field_idents.push(field_ident);
                     let field_ty = &field.ty;
-                    build_fn_header_params.push(quote! { #field_ident: #field_ty });
+                    build_fn_header_params_tokens.push(quote! { #field_ident: #field_ty });
                 }
             }
-            tail_field = fields_named.named.last().unwrap();
-            tail_field_name_ident = tail_field.ident.as_ref().unwrap();
+
+            let tail_field = named_fields.named.last().unwrap();
+            let tail_field_name_ident = tail_field.ident.as_ref().unwrap();
 
             Ok(FieldInfo {
-                header_field_structs,
-                header_field_idents,
-                build_fn_header_params,
+                header_fields: header_fields.into_boxed_slice(),
+                header_field_idents: header_field_idents.into_boxed_slice(),
+                build_fn_header_params_tokens: build_fn_header_params_tokens.into_boxed_slice(),
                 tail_field,
                 tail_field_name_ident,
             })
         }
+
         Fields::Unnamed(_) | Fields::Unit => Err(syn::Error::new_spanned(
             &input_struct.fields,
             "Structs with unnamed fields are not supported",
@@ -287,49 +196,57 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
     }
 }
 
-fn generate_header_layout_code(header_field_structs: &[&Field]) -> TokenStream {
-    let mut layout_construction_tokens = quote! {
+fn generate_header_layout_tokens(header_fields: &[&Field]) -> TokenStream {
+    let mut header_layout_tokens = quote! {
         let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
     };
 
     // Extend layout for each field.
-    for field in header_field_structs {
+    for field in header_fields {
         let field_ty = &field.ty;
         let field_span = field_ty.span();
-        layout_construction_tokens.extend(quote_spanned! {field_span =>
+        header_layout_tokens.extend(quote_spanned! {field_span =>
             let layout = layout.extend(::core::alloc::Layout::new::<#field_ty>()).unwrap().0;
         });
     }
 
-    layout_construction_tokens
+    header_layout_tokens
 }
 
-fn generate_build_method_common(common_params: CommonBuildParams) -> TokenStream {
-    let CommonBuildParams {
-        builder_args:
-            MakeDstBuilderArgs {
-                visibility: method_visibility,
-                no_std,
-                ..
-            },
-        field_info:
-            FieldInfo {
-                build_fn_header_params,
-                header_field_idents: header_param_idents_in_signature,
-                tail_field_name_ident: tail_param_ident_in_signature,
-                ..
-            },
-        header_layout_calc_tokens,
-        unique_tuple_ident,
-        method_name_ident,
-        build_fn_tail_param_tokens,
-        build_fn_generics_tokens,
-        build_fn_where_clause_tokens,
-        build_fn_tail_processing_tokens,
-        layout_calculation_for_tail_payload_tokens,
-        write_tail_data_call_tokens,
-        method_doc_string,
-    } = common_params;
+fn generate_tail_layout_tokens<T: quote::ToTokens>(
+    tail_type: &T,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    quote_spanned! { span => ::core::alloc::Layout::array::<#tail_type>(len).expect("Array exceeds maximum size allowed of isize::MAX") }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_build_fn(
+    macro_args: &MacroArgs,
+    method_name_ident: &Ident,
+    method_doc_string: &String,
+    header_layout_tokens: &TokenStream,
+    payload_layout_tokens: &TokenStream,
+    field_info: &FieldInfo<'_>,
+    write_tail_data_call_tokens: &TokenStream,
+    args_tuple_ident: &Ident,
+    build_fn_tail_param_tokens: &TokenStream,
+    build_fn_generics_tokens: Option<&TokenStream>,
+    build_fn_where_clause_tokens: Option<&TokenStream>,
+    build_fn_tail_processing_tokens: &TokenStream,
+) -> TokenStream {
+    let MacroArgs {
+        visibility: method_visibility,
+        no_std,
+        ..
+    } = macro_args;
+
+    let FieldInfo {
+        build_fn_header_params_tokens,
+        header_field_idents,
+        tail_field_name_ident,
+        ..
+    } = field_info;
 
     let (box_path, alloc_path, handle_alloc_error) = if *no_std {
         (
@@ -345,23 +262,23 @@ fn generate_build_method_common(common_params: CommonBuildParams) -> TokenStream
         )
     };
 
-    let tuple_elements_for_assignment = header_param_idents_in_signature
+    let tuple_elements_for_assignment = header_field_idents
         .iter()
         .map(|ident| quote! { #ident })
-        .chain(std::iter::once(quote! { #tail_param_ident_in_signature }))
+        .chain(std::iter::once(quote! { #tail_field_name_ident }))
         .collect::<Vec<_>>();
 
     let tuple_assignment = quote! {
-        let #unique_tuple_ident = ( #( #tuple_elements_for_assignment, )* );
+        let #args_tuple_ident = ( #( #tuple_elements_for_assignment, )* );
     };
 
     let header_field_writes =
-        header_param_idents_in_signature
+        header_field_idents
             .iter()
             .enumerate()
             .map(|(idx, field_ident_on_struct)| {
                 let tuple_idx = syn::Index::from(idx);
-                quote! { ::core::ptr::write(&mut ((*fat_ptr).#field_ident_on_struct), #unique_tuple_ident.#tuple_idx);}
+                quote! { ::core::ptr::write(&mut ((*fat_ptr).#field_ident_on_struct), #args_tuple_ident.#tuple_idx);}
             });
 
     quote! {
@@ -371,31 +288,30 @@ fn generate_build_method_common(common_params: CommonBuildParams) -> TokenStream
         #[allow(clippy::zst_offset)]
         #[allow(clippy::transmute_undefined_repr)]
         #method_visibility fn #method_name_ident #build_fn_generics_tokens (
-            #( #build_fn_header_params, )*
+            #( #build_fn_header_params_tokens, )*
             #build_fn_tail_param_tokens
         ) -> #box_path<Self> #build_fn_where_clause_tokens {
             #tuple_assignment
 
             #build_fn_tail_processing_tokens
 
-            #header_layout_calc_tokens
+            #header_layout_tokens
 
-            let layout = layout.extend(#layout_calculation_for_tail_payload_tokens).expect("Struct exceeds maximum size allowed of isize::MAX").0;
+            let layout = layout.extend(#payload_layout_tokens).expect("Struct exceeds maximum size allowed of isize::MAX").0;
             let layout = layout.pad_to_align();
 
             unsafe {
                 if layout.size() == 0 {
-                    let data_ptr = ::core::ptr::NonNull::<u8>::dangling().as_ptr();
-                    let fat_ptr_components = (data_ptr, len);
-                    #box_path::from_raw(::core::mem::transmute::<(*mut u8, usize), *mut Self>(fat_ptr_components))
+                    let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                    let fat_ptr = ::core::mem::transmute::<(*mut (), usize), *mut Self>((mem_ptr, len));
+                    #box_path::from_raw(fat_ptr)
                 } else {
                     let mem_ptr = #alloc_path(layout);
                     if mem_ptr.is_null() {
                         #handle_alloc_error
                     }
 
-                    let fat_ptr_components = (mem_ptr, len);
-                    let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>(fat_ptr_components);
+                    let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
 
                     #( #header_field_writes )*
 
@@ -406,183 +322,6 @@ fn generate_build_method_common(common_params: CommonBuildParams) -> TokenStream
             }
         }
     }
-}
-
-fn generate_build_method_for_slice(
-    builder_args: &MakeDstBuilderArgs,
-    struct_name_ident: &Ident,
-    field_info: &FieldInfo,
-    element_type: &Type,
-    input_struct_generics: &Generics,
-    header_layout_calc_tokens: &TokenStream,
-    unique_tuple_ident: &Ident,
-) -> TokenStream {
-    let base_method_name = &builder_args.base_method_name;
-    let tail_field_name_ident_for_access = field_info.tail_field_name_ident;
-
-    let method_name_ident = base_method_name.clone();
-    let method_doc_string =
-        format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.");
-
-    let build_fn_tail_param_tokens = quote! { #tail_field_name_ident_for_access: &[#element_type] };
-
-    let clone_predicate: syn::WherePredicate = syn::parse_quote_spanned! {element_type.span()=>
-        #element_type: ::core::clone::Clone
-    };
-
-    let mut final_where_clause = input_struct_generics
-        .where_clause
-        .clone()
-        .unwrap_or_else(|| syn::WhereClause {
-            where_token: Where::default(),
-            predicates: Punctuated::new(),
-        });
-
-    final_where_clause.predicates.push(clone_predicate);
-
-    let build_fn_where_clause_tokens = Some(quote! { #final_where_clause });
-
-    let num_header_fields = field_info.header_field_idents.len();
-    let tail_param_tuple_idx = syn::Index::from(num_header_fields);
-
-    let build_fn_tail_processing_tokens = quote! {
-        let len = #unique_tuple_ident.#tail_param_tuple_idx.len();
-    };
-
-    let layout_calculation_for_tail_payload_tokens =
-        create_array_layout_calculation(element_type, field_info.tail_field.ty.span());
-
-    let write_tail_data_call_tokens = quote_spanned! {element_type.span()=>
-        let dest_slice_data_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
-        for idx in 0..len {
-            let src_val_ref = #unique_tuple_ident.#tail_param_tuple_idx.get_unchecked(idx);
-            #[allow(clippy::clone_on_copy)]
-            let cloned_val = src_val_ref.clone();
-            ::core::ptr::write(dest_slice_data_ptr.add(idx), cloned_val);
-        }
-    };
-
-    generate_build_method_common(CommonBuildParams {
-        builder_args,
-        field_info,
-        header_layout_calc_tokens,
-        unique_tuple_ident,
-        method_name_ident,
-        build_fn_tail_param_tokens,
-        build_fn_generics_tokens: None,
-        build_fn_where_clause_tokens,
-        build_fn_tail_processing_tokens,
-        layout_calculation_for_tail_payload_tokens,
-        write_tail_data_call_tokens,
-        method_doc_string,
-    })
-}
-
-fn generate_build_method_for_iterator(
-    builder_args: &MakeDstBuilderArgs,
-    struct_name_ident: &Ident,
-    field_info: &FieldInfo,
-    element_type: &Type,
-    header_layout_calc_tokens: &TokenStream,
-    unique_tuple_ident: &Ident,
-) -> TokenStream {
-    let base_method_name = &builder_args.base_method_name;
-    let tail_field_name_ident_for_access = field_info.tail_field_name_ident;
-
-    let method_name_ident = format_ident!("{}_from_iter", base_method_name);
-    let method_doc_string =
-        format!("Creates an instance of `Box<{struct_name_ident}>` from an iterator.");
-
-    let iter_generic_param = format_ident!("I");
-    let build_fn_tail_param_tokens =
-        quote! { #tail_field_name_ident_for_access: #iter_generic_param };
-    let build_fn_generics_tokens = Some(quote! { <#iter_generic_param> });
-    let build_fn_where_clause_tokens = Some(quote! {
-        where #iter_generic_param: ::core::iter::IntoIterator<Item = #element_type>,
-              <#iter_generic_param as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator
-    });
-
-    let num_header_fields = field_info.header_field_idents.len();
-    let tail_param_tuple_idx = syn::Index::from(num_header_fields);
-
-    let build_fn_tail_processing_tokens = quote! {
-        let iter = #unique_tuple_ident.#tail_param_tuple_idx.into_iter();
-        let len = iter.len();
-    };
-
-    let layout_calculation_for_tail_payload_tokens =
-        create_array_layout_calculation(element_type, field_info.tail_field.ty.span());
-
-    let write_tail_data_call_tokens = quote! {
-        let dest_slice_data_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_name_ident_for_access).cast::<#element_type>();
-        for (i, element) in iter.enumerate() {
-             ::core::ptr::write(dest_slice_data_ptr.add(i), element);
-        }
-    };
-
-    generate_build_method_common(CommonBuildParams {
-        builder_args,
-        field_info,
-        header_layout_calc_tokens,
-        unique_tuple_ident,
-        method_name_ident,
-        build_fn_tail_param_tokens,
-        build_fn_generics_tokens,
-        build_fn_where_clause_tokens,
-        build_fn_tail_processing_tokens,
-        layout_calculation_for_tail_payload_tokens,
-        write_tail_data_call_tokens,
-        method_doc_string,
-    })
-}
-
-fn generate_build_method_for_str(
-    builder_args: &MakeDstBuilderArgs,
-    struct_name_ident: &Ident,
-    field_info: &FieldInfo,
-    header_layout_calc_tokens: &TokenStream,
-    unique_tuple_ident: &Ident,
-) -> TokenStream {
-    let base_method_name = &builder_args.base_method_name;
-    let tail_field_name_ident_for_access = field_info.tail_field_name_ident;
-
-    let method_name_ident = base_method_name.clone();
-    let method_doc_string =
-        format!("Creates an instance of `Box<{struct_name_ident}>` from a string slice.");
-
-    let build_fn_tail_param_tokens =
-        quote! { #tail_field_name_ident_for_access: impl ::core::convert::AsRef<str> };
-
-    let num_header_fields = field_info.header_field_idents.len();
-    let tail_param_tuple_idx = syn::Index::from(num_header_fields);
-
-    let build_fn_tail_processing_tokens = quote! {
-        let s = #unique_tuple_ident.#tail_param_tuple_idx.as_ref();
-        let len = s.len();
-    };
-
-    let layout_calculation_for_tail_payload_tokens =
-        create_array_layout_calculation(&quote! { u8 }, field_info.tail_field.ty.span());
-
-    let write_tail_data_call_tokens = quote! {
-        let dest_str_data_ptr = (&raw mut (*fat_ptr).#tail_field_name_ident_for_access).cast::<u8>();
-        ::core::ptr::copy_nonoverlapping(s.as_ptr(), dest_str_data_ptr, len);
-    };
-
-    generate_build_method_common(CommonBuildParams {
-        builder_args,
-        field_info,
-        header_layout_calc_tokens,
-        unique_tuple_ident,
-        method_name_ident,
-        build_fn_tail_param_tokens,
-        build_fn_generics_tokens: None,
-        build_fn_where_clause_tokens: None,
-        build_fn_tail_processing_tokens,
-        layout_calculation_for_tail_payload_tokens,
-        write_tail_data_call_tokens,
-        method_doc_string,
-    })
 }
 
 /// Generate builder methods for dynamically sized types (DST) structs.
@@ -626,80 +365,179 @@ pub fn make_dst_builder(
     result.unwrap_or_else(|err| err.to_compile_error()).into()
 }
 
+#[allow(clippy::too_many_lines)]
 fn make_dst_builder_impl(
     attr_args_ts: TokenStream,
     item_ts: TokenStream,
 ) -> SynResult<TokenStream> {
-    let builder_args = if attr_args_ts.is_empty() {
-        MakeDstBuilderArgs {
-            visibility: Visibility::Inherited,
-            base_method_name: format_ident!("build"),
-            no_std: false,
-        }
-    } else {
-        syn::parse2(attr_args_ts)?
-    };
+    let macro_args = MacroArgs::parse(attr_args_ts)?;
     let input_struct: ItemStruct = syn::parse2(item_ts)?;
 
     let struct_name_ident = &input_struct.ident;
-    let struct_generics: &Generics = &input_struct.generics;
+    let struct_generics = &input_struct.generics;
     let (impl_generics, ty_generics, where_clause) = struct_generics.split_for_impl();
 
     let field_info = extract_field_info(&input_struct)?;
 
-    let header_layout_calc_tokens = generate_header_layout_code(&field_info.header_field_structs);
+    let header_layout_tokens = generate_header_layout_tokens(&field_info.header_fields);
 
-    let mut generated_build_methods: Vec<TokenStream> = Vec::new();
+    let mut generated_build_methods = Vec::new();
 
     // Collect incoming argument names from the signature to avoid collision for the tuple variable
-    let mut arg_names_for_collision_check = field_info
+    let mut arg_names = field_info
         .header_field_idents
         .iter()
         .map(std::string::ToString::to_string)
         .collect::<HashSet<String>>();
-    arg_names_for_collision_check.insert(field_info.tail_field_name_ident.to_string());
+    arg_names.insert(field_info.tail_field_name_ident.to_string());
 
     // Generate a unique name for the tuple (e.g., a, aa, aaa)
-    let mut generated_tuple_name_str = "a".to_string();
-    while arg_names_for_collision_check.contains(&generated_tuple_name_str) {
-        generated_tuple_name_str.push('a');
+    let mut tuple_name = "a".to_string();
+    while arg_names.contains(&tuple_name) {
+        tuple_name.push('a');
     }
-    let unique_tuple_ident = format_ident!(
-        "{}",
-        generated_tuple_name_str,
-        span = proc_macro2::Span::call_site()
-    );
+    let args_tuple_ident = format_ident!("{}", tuple_name, span = proc_macro2::Span::call_site());
+    let base_method_name = &macro_args.base_method_name;
+    let tail_field_name_ident = field_info.tail_field_name_ident;
+    let method_name_ident = base_method_name;
+    let num_header_fields = field_info.header_field_idents.len();
+    let tail_param_tuple_idx = syn::Index::from(num_header_fields);
 
-    match &field_info.tail_field.ty {
-        Type::Slice(TypeSlice { elem, .. }) => {
-            generated_build_methods.push(generate_build_method_for_slice(
-                &builder_args,
-                struct_name_ident,
-                &field_info,
-                elem,
-                struct_generics,
-                &header_layout_calc_tokens,
-                &unique_tuple_ident,
-            ));
+    if let Type::Slice(TypeSlice {
+        elem: tail_type, ..
+    }) = &field_info.tail_field.ty
+    {
+        let method_doc_string =
+            format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.");
 
-            generated_build_methods.push(generate_build_method_for_iterator(
-                &builder_args,
-                struct_name_ident,
-                &field_info,
-                elem,
-                &header_layout_calc_tokens,
-                &unique_tuple_ident,
-            ));
-        }
-        _ => {
-            generated_build_methods.push(generate_build_method_for_str(
-                &builder_args,
-                struct_name_ident,
-                &field_info,
-                &header_layout_calc_tokens,
-                &unique_tuple_ident,
-            ));
-        }
+        let build_fn_tail_param_tokens = quote! { #tail_field_name_ident: &[#tail_type] };
+
+        let clone_predicate_tokens: syn::WherePredicate = syn::parse_quote_spanned! {tail_type.span()=>
+            #tail_type: ::core::clone::Clone
+        };
+
+        let mut final_where_clause =
+            struct_generics
+                .where_clause
+                .clone()
+                .unwrap_or_else(|| syn::WhereClause {
+                    where_token: Where::default(),
+                    predicates: Punctuated::new(),
+                });
+
+        final_where_clause.predicates.push(clone_predicate_tokens);
+
+        let build_fn_where_clause_tokens = Some(quote! { #final_where_clause });
+
+        let build_fn_tail_processing_tokens = quote! {
+            let len = #args_tuple_ident.#tail_param_tuple_idx.len();
+        };
+
+        let payload_layout_tokens =
+            generate_tail_layout_tokens(tail_type, field_info.tail_field.ty.span());
+
+        let write_tail_data_call_tokens = quote_spanned! {tail_type.span()=>
+            let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_name_ident).cast::<#tail_type>();
+            for idx in 0..len {
+                let src_val_ref = #args_tuple_ident.#tail_param_tuple_idx.get_unchecked(idx);
+                #[allow(clippy::clone_on_copy)]
+                let cloned_val = src_val_ref.clone();
+                ::core::ptr::write(tail_ptr.add(idx), cloned_val);
+            }
+        };
+
+        generated_build_methods.push(generate_build_fn(
+            &macro_args,
+            method_name_ident,
+            &method_doc_string,
+            &header_layout_tokens,
+            &payload_layout_tokens,
+            &field_info,
+            &write_tail_data_call_tokens,
+            &args_tuple_ident,
+            &build_fn_tail_param_tokens,
+            None, // build_fn_generics_tokens
+            build_fn_where_clause_tokens.as_ref(),
+            &build_fn_tail_processing_tokens,
+        ));
+
+        let method_name_ident = format_ident!("{}_from_iter", base_method_name);
+        let method_doc_string =
+            format!("Creates an instance of `Box<{struct_name_ident}>` from an iterator.");
+
+        let iter_generic_param_ident = format_ident!("I");
+        let build_fn_tail_param_tokens =
+            quote! { #tail_field_name_ident: #iter_generic_param_ident };
+        let build_fn_generics_tokens = Some(quote! { <#iter_generic_param_ident> });
+        let build_fn_where_clause_tokens = Some(quote! {
+            where #iter_generic_param_ident: ::core::iter::IntoIterator<Item = #tail_type>,
+                  <#iter_generic_param_ident as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator
+        });
+
+        let build_fn_tail_processing_tokens = quote! {
+            let iter = #args_tuple_ident.#tail_param_tuple_idx.into_iter();
+            let len = iter.len();
+        };
+
+        let payload_layout_tokens =
+            generate_tail_layout_tokens(tail_type, field_info.tail_field.ty.span());
+
+        let write_tail_data_call_tokens = quote! {
+            let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_name_ident).cast::<#tail_type>();
+            for (i, element) in iter.enumerate() {
+                 ::core::ptr::write(tail_ptr.add(i), element);
+            }
+        };
+
+        generated_build_methods.push(generate_build_fn(
+            &macro_args,
+            &method_name_ident,
+            &method_doc_string,
+            &header_layout_tokens,
+            &payload_layout_tokens,
+            &field_info,
+            &write_tail_data_call_tokens,
+            &args_tuple_ident,
+            &build_fn_tail_param_tokens,
+            build_fn_generics_tokens.as_ref(),
+            build_fn_where_clause_tokens.as_ref(),
+            &build_fn_tail_processing_tokens,
+        ));
+    } else {
+        let method_name_ident = base_method_name;
+        let method_doc_string =
+            format!("Creates an instance of `Box<{struct_name_ident}>` from a string slice.");
+
+        let build_fn_tail_param_tokens =
+            quote! { #tail_field_name_ident: impl ::core::convert::AsRef<str> };
+
+        let build_fn_tail_processing_tokens = quote! {
+            let s = #args_tuple_ident.#tail_param_tuple_idx.as_ref();
+            let len = s.len();
+        };
+
+        let payload_layout_tokens =
+            generate_tail_layout_tokens(&quote! { u8 }, field_info.tail_field.ty.span());
+
+        let write_tail_data_call_tokens = quote! {
+            let tail_ptr = (&raw mut (*fat_ptr).#tail_field_name_ident).cast::<u8>();
+            ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+        };
+
+        generated_build_methods.push(generate_build_fn(
+            &macro_args,
+            method_name_ident,
+            &method_doc_string,
+            &header_layout_tokens,
+            &payload_layout_tokens,
+            &field_info,
+            &write_tail_data_call_tokens,
+            &args_tuple_ident,
+            &build_fn_tail_param_tokens,
+            None, // build_fn_generics_tokens
+            None, // build_fn_where_clause_tokens
+            &build_fn_tail_processing_tokens,
+        ));
     }
 
     let build_methods_impl_block = quote! {
@@ -708,11 +546,9 @@ fn make_dst_builder_impl(
         }
     };
 
-    let expanded = quote! {
+    Ok(quote! {
         #[repr(C)]
         #input_struct
         #build_methods_impl_block
-    };
-
-    Ok(expanded)
+    })
 }

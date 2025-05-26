@@ -1,5 +1,6 @@
 #![allow(clippy::literal_string_with_formatting_args)]
 
+use std::fmt::Debug;
 use tail_extend::make_dst_builder;
 
 // Test 1: Basic functionality with str field
@@ -154,17 +155,22 @@ fn test_generic_const_dst() {
 
 // Test 10: Struct with complex field types before DST
 #[make_dst_builder(build_complex_fields)]
-struct ComplexFieldsStruct {
+struct ComplexFieldsStruct<T>
+where
+    T: Debug,
+{
     coordinates: (f32, f32, f32),
     tags: Option<Vec<String>>,
+    dbg: T,
     raw_log: str,
 }
 
 #[test]
 fn test_complex_fields_before_dst() {
-    let instance: Box<ComplexFieldsStruct> = ComplexFieldsStruct::build_complex_fields(
+    let instance: Box<ComplexFieldsStruct<u8>> = ComplexFieldsStruct::build_complex_fields(
         (1.0, -2.5, 3.0),
         Some(vec!["tag1".to_string(), "tag2".to_string()]),
+        0,
         "Log entry data here",
     );
     assert_eq!(instance.coordinates, (1.0, -2.5, 3.0));
