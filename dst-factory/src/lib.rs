@@ -13,9 +13,18 @@
 //! This is where this crate comes in.
 //!
 //! You can apply the #[[`macro@make_dst_factory`]] attribute to your DST struct which causes factory
-//! methods to be produced that let you easily and safely create instances of your DST.
+//! functions to be produced that let you easily and safely create instances of your DST.
 //!
-//! ## Example
+//! # Why Should You Care?
+//!
+//! Dynamically sized types aren't for everyone. You can't put hold them as local variables
+//! or put them in arrays or vectors, so they can be inconvenient to use. However, their value
+//! lies in situations where you have a lot of heap-allocated objects, as they can substantially
+//! reduce the memory footprint of your application. If you're building graphs, tress, or other
+//! dynamic data structures, you can often leverage DSTs to keep your individual nodes smaller
+//! and more efficient.
+//!
+//! # Examples
 //!
 //! Here's an example using an array as the last field of a struct:
 //!
@@ -60,17 +69,20 @@
 //! and you can't pass them by value. As a result of these constraints, the `build` and
 //! `build_from_iter` functions always return boxed instances of the structs.
 //!
-//! ## Attribute Features
+//! # Attribute Features
 //!
 //! The common use case for the #[[`macro@make_dst_factory`]] attribute is to not pass any arguments.
-//! This results in factory methods called `build` when using a string as the last field of the
+//! This results in factory functions called `build` when using a string as the last field of the
 //! struct, and `build` and `build_from_iter` when using an array as the last field of the struct.
 //!
-//! The generated methods are private by default and have the following signatures:
+//! The generated functions are private by default and have the following signatures:
 //!
 //! ```ignore
 //! // for arrays
-//! fn build(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self> where last_field_type: Clone;
+//! fn build(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>
+//! where
+//!     last_field_type: Clone;
+//! 
 //! fn build_from_iter<I>(field1, field2, ..., last_field: I) -> Box<Self>
 //! where
 //!     I: IntoIterator<Item = last_field_type>,
@@ -80,28 +92,28 @@
 //! fn build(field1, field2, ..., last_field: impl AsRef<str>) -> Box<Self>;
 //! ```
 //!
-//! The attribute lets you control the name of the generated factory methods, their
+//! The attribute lets you control the name of the generated functions, their
 //! visibility, and whether to generate code for the `no_std` environment. The general
 //! grammar is:
 //!
 //! ```ignore
-//! #[make_dst_factory(<base_method_name>[, <visibility>] [, no_std])]
+//! #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std])]
 //! ```
 //!
 //! Some examples:
 //!
 //! ```ignore
-//! // The factory methods will be private and called `create` and `create_from_iter`
+//! // The factory functions will be private and called `create` and `create_from_iter`
 //! #[make_dst_factory(create)]
 //!
-//! // The factory methods will be public and called `create` and `create_from_iter`
+//! // The factory functions will be public and called `create` and `create_from_iter`
 //! #[make_dst_factory(create, pub)]
 //!
-//! // The factory methods will be private, called `create` and `create_from_iter`, and support the `no_std` environment
+//! // The factory functions will be private, called `create` and `create_from_iter`, and support the `no_std` environment
 //! #[make_dst_factory(create, no_std)]
 //! ```
 //!
-//! ## Error Conditions
+//! # Error Conditions
 //!
 //! The #[[`macro@make_dst_factory`]] attribute produces a compile-time error if:
 //!
@@ -220,22 +232,22 @@ fn generate_tail_layout_tokens<T: quote::ToTokens>(tail_type: &T, span: Span) ->
 }
 
 #[allow(clippy::too_many_arguments)]
-fn generate_build_fn(
+fn generate_factory(
     macro_args: &MacroArgs,
-    method_name_ident: &Ident,
-    method_doc_string: &String,
-    header_layout_tokens: &TokenStream,
-    payload_layout_tokens: &TokenStream,
     field_info: &FieldInfo<'_>,
-    write_tail_data_call_tokens: &TokenStream,
+    factory_name_ident: &Ident,
+    factory_doc_string: &String,
+    factory_generics_tokens: Option<&TokenStream>,
+    factory_where_clause_tokens: Option<&TokenStream>,
     args_tuple_ident: &Ident,
-    build_fn_tail_param_tokens: &TokenStream,
-    build_fn_generics_tokens: Option<&TokenStream>,
-    build_fn_where_clause_tokens: Option<&TokenStream>,
-    build_fn_tail_processing_tokens: &TokenStream,
+    header_layout_tokens: &TokenStream,
+    tail_param_tokens: &TokenStream,
+    tail_layout_tokens: &TokenStream,
+    tail_processing_tokens: &TokenStream,
+    tail_write_tokens: &TokenStream,
 ) -> TokenStream {
     let MacroArgs {
-        visibility: method_visibility,
+        visibility: factory_visibility,
         no_std,
         ..
     } = macro_args;
@@ -281,22 +293,21 @@ fn generate_build_fn(
             });
 
     quote! {
-        #[doc = #method_doc_string]
-        #[allow(unused_variables)]
+        #[doc = #factory_doc_string]
         #[allow(clippy::let_unit_value)]
         #[allow(clippy::zst_offset)]
         #[allow(clippy::transmute_undefined_repr)]
-        #method_visibility fn #method_name_ident #build_fn_generics_tokens (
+        #factory_visibility fn #factory_name_ident #factory_generics_tokens (
             #( #build_fn_header_params_tokens, )*
-            #build_fn_tail_param_tokens
-        ) -> #box_path<Self> #build_fn_where_clause_tokens {
+            #tail_param_tokens
+        ) -> #box_path<Self> #factory_where_clause_tokens {
             #tuple_assignment
 
-            #build_fn_tail_processing_tokens
+            #tail_processing_tokens
 
             #header_layout_tokens
 
-            let layout = layout.extend(#payload_layout_tokens).expect("Struct exceeds maximum size allowed of isize::MAX").0;
+            let layout = layout.extend(#tail_layout_tokens).expect("Struct exceeds maximum size allowed of isize::MAX").0;
             let layout = layout.pad_to_align();
 
             unsafe {
@@ -314,7 +325,7 @@ fn generate_build_fn(
 
                     #( #header_field_writes )*
 
-                    #write_tail_data_call_tokens
+                    #tail_write_tokens
 
                     #box_path::from_raw(fat_ptr)
                 }
@@ -323,17 +334,17 @@ fn generate_build_fn(
     }
 }
 
-/// Generate builder methods for dynamically sized types (DST) structs.
+/// Generate factory functions for dynamically sized types (DST) structs.
 ///
 /// This macro, when applied to a struct whose last field is a slice (`[T]`) or `str`,
-/// generates an `impl` block with methods to construct instances of the structs with
+/// generates an `impl` block with functions to construct instances of the structs with
 /// dynamically sized tail data.
 ///
 /// This attribute is generally used without any arguments, but more advanced
 /// uses can pass arguments with the following grammar:
 ///
 /// ```ignore
-/// #[make_dst_factory(<base_method_name>[, <visibility>] [, no_std])]
+/// #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std])]
 /// ```
 /// Refer to the [crate-level documentation](crate) for more details and example uses.
 ///
@@ -348,7 +359,7 @@ fn generate_build_fn(
 ///     data: [u8],
 /// }
 ///
-/// // With custom method name and public visibility
+/// // With custom factory name and public visibility
 /// #[make_dst_factory(create, pub)]
 /// struct PublicStruct {
 ///     id: u32,
@@ -365,22 +376,16 @@ pub fn make_dst_factory(
 }
 
 #[allow(clippy::too_many_lines)]
-fn make_dst_factory_impl(
-    attr_args_ts: TokenStream,
-    item_ts: TokenStream,
-) -> SynResult<TokenStream> {
-    let macro_args = MacroArgs::parse(attr_args_ts)?;
-    let input_struct: ItemStruct = syn::parse2(item_ts)?;
+fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult<TokenStream> {
+    let macro_args = MacroArgs::parse(attr_args)?;
+    let input_struct: ItemStruct = syn::parse2(item)?;
 
     let struct_name_ident = &input_struct.ident;
     let struct_generics = &input_struct.generics;
     let (impl_generics, ty_generics, where_clause) = struct_generics.split_for_impl();
-
     let field_info = extract_field_info(&input_struct)?;
-
     let header_layout_tokens = generate_header_layout_tokens(&field_info.header_fields);
-
-    let mut generated_build_methods = Vec::new();
+    let mut generated_factories = Vec::new();
 
     // Collect incoming argument names from the signature to avoid collision for the tuple variable
     let mut arg_names = field_info
@@ -396,9 +401,9 @@ fn make_dst_factory_impl(
         tuple_name.push('a');
     }
     let args_tuple_ident = format_ident!("{}", tuple_name, span = Span::call_site());
-    let base_method_name = &macro_args.base_method_name;
+    let base_factory_name = &macro_args.base_factory_name;
     let tail_field_name_ident = field_info.tail_field_name_ident;
-    let method_name_ident = base_method_name;
+    let factory_name_ident = base_factory_name;
     let num_header_fields = field_info.header_field_idents.len();
     let tail_param_tuple_idx = syn::Index::from(num_header_fields);
 
@@ -406,10 +411,10 @@ fn make_dst_factory_impl(
         elem: tail_type, ..
     }) = &field_info.tail_field.ty
     {
-        let method_doc_string =
+        let factory_doc_string =
             format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.");
 
-        let build_fn_tail_param_tokens = quote! { #tail_field_name_ident: &[#tail_type] };
+        let tail_param_tokens = quote! { #tail_field_name_ident: &[#tail_type] };
 
         let clone_predicate_tokens: syn::WherePredicate = syn::parse_quote_spanned! {tail_type.span()=>
             #tail_type: ::core::clone::Clone
@@ -426,16 +431,16 @@ fn make_dst_factory_impl(
 
         final_where_clause.predicates.push(clone_predicate_tokens);
 
-        let build_fn_where_clause_tokens = Some(quote! { #final_where_clause });
+        let factory_where_clause_tokens = Some(quote! { #final_where_clause });
 
-        let build_fn_tail_processing_tokens = quote! {
+        let tail_processing_tokens = quote! {
             let len = #args_tuple_ident.#tail_param_tuple_idx.len();
         };
 
-        let payload_layout_tokens =
+        let tail_layout_tokens =
             generate_tail_layout_tokens(tail_type, field_info.tail_field.ty.span());
 
-        let write_tail_data_call_tokens = quote_spanned! {tail_type.span()=>
+        let tail_write_tokens = quote_spanned! {tail_type.span()=>
             let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_name_ident).cast::<#tail_type>();
             for idx in 0..len {
                 let src_val_ref = #args_tuple_ident.#tail_param_tuple_idx.get_unchecked(idx);
@@ -445,109 +450,104 @@ fn make_dst_factory_impl(
             }
         };
 
-        generated_build_methods.push(generate_build_fn(
+        generated_factories.push(generate_factory(
             &macro_args,
-            method_name_ident,
-            &method_doc_string,
-            &header_layout_tokens,
-            &payload_layout_tokens,
             &field_info,
-            &write_tail_data_call_tokens,
+            factory_name_ident,
+            &factory_doc_string,
+            None, // factory_generics_tokens
+            factory_where_clause_tokens.as_ref(),
             &args_tuple_ident,
-            &build_fn_tail_param_tokens,
-            None, // build_fn_generics_tokens
-            build_fn_where_clause_tokens.as_ref(),
-            &build_fn_tail_processing_tokens,
+            &header_layout_tokens,
+            &tail_param_tokens,
+            &tail_layout_tokens,
+            &tail_processing_tokens,
+            &tail_write_tokens,
         ));
 
-        let method_name_ident = format_ident!("{}_from_iter", base_method_name);
-        let method_doc_string =
+        let factory_name_ident = format_ident!("{}_from_iter", base_factory_name);
+        let factory_doc_string =
             format!("Creates an instance of `Box<{struct_name_ident}>` from an iterator.");
 
         let iter_generic_param_ident = format_ident!("I");
-        let build_fn_tail_param_tokens =
-            quote! { #tail_field_name_ident: #iter_generic_param_ident };
-        let build_fn_generics_tokens = Some(quote! { <#iter_generic_param_ident> });
-        let build_fn_where_clause_tokens = Some(quote! {
+        let tail_param_tokens = quote! { #tail_field_name_ident: #iter_generic_param_ident };
+        let factory_generics_tokens = Some(quote! { <#iter_generic_param_ident> });
+        let factory_where_clause_tokens = Some(quote! {
             where #iter_generic_param_ident: ::core::iter::IntoIterator<Item = #tail_type>,
                   <#iter_generic_param_ident as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator
         });
 
-        let build_fn_tail_processing_tokens = quote! {
+        let tail_processing_tokens = quote! {
             let iter = #args_tuple_ident.#tail_param_tuple_idx.into_iter();
             let len = iter.len();
         };
 
-        let payload_layout_tokens =
+        let tail_layout_tokens =
             generate_tail_layout_tokens(tail_type, field_info.tail_field.ty.span());
 
-        let write_tail_data_call_tokens = quote! {
+        let tail_write_tokens = quote! {
             let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_name_ident).cast::<#tail_type>();
             for (i, element) in iter.enumerate() {
                  ::core::ptr::write(tail_ptr.add(i), element);
             }
         };
 
-        generated_build_methods.push(generate_build_fn(
+        generated_factories.push(generate_factory(
             &macro_args,
-            &method_name_ident,
-            &method_doc_string,
-            &header_layout_tokens,
-            &payload_layout_tokens,
             &field_info,
-            &write_tail_data_call_tokens,
+            &factory_name_ident,
+            &factory_doc_string,
+            factory_generics_tokens.as_ref(),
+            factory_where_clause_tokens.as_ref(),
             &args_tuple_ident,
-            &build_fn_tail_param_tokens,
-            build_fn_generics_tokens.as_ref(),
-            build_fn_where_clause_tokens.as_ref(),
-            &build_fn_tail_processing_tokens,
+            &header_layout_tokens,
+            &tail_param_tokens,
+            &tail_layout_tokens,
+            &tail_processing_tokens,
+            &tail_write_tokens,
         ));
     } else {
-        let method_name_ident = base_method_name;
-        let method_doc_string =
+        let factory_name_ident = base_factory_name;
+        let factory_doc_string =
             format!("Creates an instance of `Box<{struct_name_ident}>` from a string slice.");
 
-        let build_fn_tail_param_tokens =
-            quote! { #tail_field_name_ident: impl ::core::convert::AsRef<str> };
+        let tail_param_tokens = quote! { #tail_field_name_ident: impl ::core::convert::AsRef<str> };
 
-        let build_fn_tail_processing_tokens = quote! {
+        let tail_processing_tokens = quote! {
             let s = #args_tuple_ident.#tail_param_tuple_idx.as_ref();
             let len = s.len();
         };
 
-        let payload_layout_tokens =
+        let tail_layout_tokens =
             generate_tail_layout_tokens(&quote! { u8 }, field_info.tail_field.ty.span());
 
-        let write_tail_data_call_tokens = quote! {
+        let tail_write_tokens = quote! {
             let tail_ptr = (&raw mut (*fat_ptr).#tail_field_name_ident).cast::<u8>();
             ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
         };
 
-        generated_build_methods.push(generate_build_fn(
+        generated_factories.push(generate_factory(
             &macro_args,
-            method_name_ident,
-            &method_doc_string,
-            &header_layout_tokens,
-            &payload_layout_tokens,
             &field_info,
-            &write_tail_data_call_tokens,
+            factory_name_ident,
+            &factory_doc_string,
+            None, // factory_generics_tokens
+            None,
             &args_tuple_ident,
-            &build_fn_tail_param_tokens,
-            None, // build_fn_generics_tokens
-            None, // build_fn_where_clause_tokens
-            &build_fn_tail_processing_tokens,
+            &header_layout_tokens,
+            &tail_param_tokens,
+            &tail_layout_tokens, // factory_where_clause_tokens
+            &tail_processing_tokens,
+            &tail_write_tokens,
         ));
     }
-
-    let build_methods_impl_block = quote! {
-        impl #impl_generics #struct_name_ident #ty_generics #where_clause {
-            #( #generated_build_methods )*
-        }
-    };
 
     Ok(quote! {
         #[repr(C)]
         #input_struct
-        #build_methods_impl_block
+
+        impl #impl_generics #struct_name_ident #ty_generics #where_clause {
+            #( #generated_factories )*
+        }
     })
 }

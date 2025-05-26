@@ -8,7 +8,8 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 * [Summary](#summary)
-* [Example](#example)
+* [Why Should You Care?](#why-should-you-care)
+* [Examples](#example)
 * [Attribute Features](#attribute-features)
 * [Error Conditions](#error-conditions)
 
@@ -18,7 +19,7 @@ This crate lets you allocate variable data inline at the end of a struct. If you
 struct that gets allocated on the heap and has some variable-length data associated with it
 (like a string or an array), then you can allocate this data directly inline with the struct.
 This saves memory by avoiding the need for a pointer and a separate allocation, and saves CPU
-cycles by eliminating the need for an indirection when accessing the data.
+cycles by eliminating the need for indirection when accessing the data.
 
 Rust supports the notion of [Dynamically Sized Types](https://doc.rust-lang.org/reference/dynamically-sized-types.html), known as DSTs,
 which are types that have a size
@@ -27,9 +28,18 @@ unfortunately, Rust doesn't provide an out-of-the-box way to allocate instances 
 This is where this crate comes in.
 
 You can apply the `#[make_dst_factory]` attribute to your DST struct which causes factory
-methods to be produced that let you easily and safely create instances of your DST.
+functions to be produced that let you easily and safely create instances of your DST.
 
-## Example
+## Why Should You Care?
+
+Dynamically sized types aren't for everyone. You can't put hold them as local variables
+or put them in arrays or vectors, so they can be inconvenient to use. However, their value
+lies in situations where you have a lot of heap-allocated objects, as they can substantially
+reduce the memory footprint of your application. If you're building graphs, tress, or other
+dynamic data structures, you can often leverage DSTs to keep your individual nodes smaller
+and more efficient.
+
+## Examples
 
 Here's an example using an array as the last field of a struct:
 
@@ -77,49 +87,53 @@ and you can't pass them by value. As a result of these constraints, the `build` 
 ## Attribute Features
 
 The common use case for the `#[make_dst_factory]` attribute is to not pass any arguments.
-This results in factory methods called `build` when using a string as the last field of the
+This results in factory functions called `build` when using a string as the last field of the
 struct, and `build` and `build_from_iter` when using an array as the last field of the struct.
 
-The generated methods are private by default and have the following signatures:
+The generated functions are private by default and have the following signatures:
 
 ```ignore
 // for arrays
-fn build(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>;
+fn build(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>
+where
+    last_field_type: Clone;
+
 fn build_from_iter<I>(field1, field2, ..., last_field: I) -> Box<Self>
 where
     I: IntoIterator<Item = last_field_type>,
     <I as IntoIterator>::IntoIter: ExactSizeIterator,
 
 // for strings
-fn build(field1, field2, ..., last_field: &str) -> Box<Self>;
+fn build(field1, field2, ..., last_field: impl AsRef<str>) -> Box<Self>;
 ```
 
-The attribute lets you control the name of the generated factory methods, their
-visibility, and whether to generate for the `no_std` environment. The general
+The attribute lets you control the name of the generated functions, their
+visibility, and whether to generate code for the `no_std` environment. The general
 grammar is:
 
 ```ignore
-#[make_dst_factory(<base_method_name>[, <visibility>] [, no_std])]
+#[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std])]
 ```
 
 Some examples:
 
 ```ignore
-// The factory methods will be private and called `create` and `create_from_iter`
+// The factory functions will be private and called `create` and `create_from_iter`
 #[make_dst_factory(create)]
 
-// The factory methods will be public and called `create` and `create_from_iter`
+// The factory functions will be public and called `create` and `create_from_iter`
 #[make_dst_factory(create, pub)]
 
-// The factory methods will be private, called `create` and `create_from_iter`, and support the `no_std` environment
+// The factory functions will be private, called `create` and `create_from_iter`, and support the `no_std` environment
 #[make_dst_factory(create, no_std)]
 ```
 
 ## Error Conditions
 
-The `#[make_dst_factory]` macro produces a compile-time error if:
+The `#[make_dst_factory]` attribute produces a compile-time error if:
 
 - It's applied to anything other than a struct with named fields.
-- The struct has no fields (a tail field is essential for a DST).
+- Its arguments are malformed (e.g., incorrect visibility keyword, too many arguments).
+- The struct has no fields.
 - The last field of the struct is not a slice (`[T]`) or a string (`str`).
-- The arguments are malformed (e.g., incorrect visibility keyword, too many arguments).
+- The resulting struct exceeds the maximum size allowed of `isize::MAX`.

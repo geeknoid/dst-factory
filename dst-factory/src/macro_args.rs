@@ -7,7 +7,7 @@ use syn::{
 
 pub struct MacroArgs {
     pub visibility: Visibility,
-    pub base_method_name: Ident,
+    pub base_factory_name: Ident,
     pub no_std: bool,
 }
 
@@ -15,22 +15,22 @@ impl Parse for MacroArgs {
     fn parse(input: ParseStream) -> SynResult<Self> {
         let mut result = Self {
             visibility: Visibility::Inherited,
-            base_method_name: Ident::new("build", input.span()),
+            base_factory_name: Ident::new("build", input.span()),
             no_std: false,
         };
 
-        // Check for method name
+        // Check for factory name
         if input.peek(syn::Ident) {
             let ahead = input.fork();
             let ident = ahead.parse::<Ident>()?;
             if ident != "no_std" && ident != "pub" {
-                result.base_method_name = ident;
+                result.base_factory_name = ident;
 
                 input.advance_to(&ahead);
                 if !input.is_empty() {
                     input
                         .parse::<Token![,]>()
-                        .map_err(|_| input.error("Expected comma after method name"))?;
+                        .map_err(|_| input.error("Expected comma after factory name"))?;
                 }
             }
         }
@@ -71,7 +71,7 @@ impl MacroArgs {
         if attr_args_ts.is_empty() {
             Ok(Self {
                 visibility: Visibility::Inherited,
-                base_method_name: format_ident!("build"),
+                base_factory_name: format_ident!("build"),
                 no_std: false,
             })
         } else {
