@@ -1,9 +1,9 @@
 
 extern crate alloc;
 
-use tail_extend::make_dst_builder;
+use dst_factory::make_dst_factory;
 
-#[make_dst_builder(no_std)]
+#[make_dst_factory(no_std)]
 struct NoStd {
     id: i32,
     data: str,

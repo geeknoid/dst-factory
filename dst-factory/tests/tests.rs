@@ -1,10 +1,10 @@
 #![allow(clippy::literal_string_with_formatting_args)]
 
+use dst_factory::make_dst_factory;
 use std::fmt::Debug;
-use tail_extend::make_dst_builder;
 
 // Test 1: Basic functionality with str field
-#[make_dst_builder(basic_str_builder)]
+#[make_dst_factory(basic_str_builder)]
 struct BasicStrStruct {
     id: usize,
     text_data: str,
@@ -23,7 +23,7 @@ fn test_basic_str_usage() {
 }
 
 // Test 2: Basic functionality with slice field and generics
-#[make_dst_builder(basic_slice_builder)]
+#[make_dst_factory(basic_slice_builder)]
 struct BasicSliceStruct<T> {
     id: usize,
     elements: [T],
@@ -43,7 +43,7 @@ fn test_basic_slice_usage() {
 }
 
 // Test 3: Custom public builder name
-#[make_dst_builder(create_publicly, pub)]
+#[make_dst_factory(create_publicly, pub)]
 struct PublicBuilderStruct {
     code: std::primitive::u16,
     message: std::primitive::str,
@@ -57,7 +57,7 @@ fn test_public_builder() {
 }
 
 // Test 4: Custom crate-visible builder name
-#[make_dst_builder(create_for_crate, pub(crate))]
+#[make_dst_factory(create_for_crate, pub(crate))]
 struct CrateBuilderStruct {
     level: u8,
     description: str,
@@ -71,7 +71,7 @@ fn test_crate_builder() {
 }
 
 // Test 5: Default builder name (`build`)
-#[make_dst_builder]
+#[make_dst_factory]
 struct DefaultBuilderNameStruct {
     value: i64,
     name_tag: str,
@@ -86,7 +86,7 @@ fn test_default_builder_name() {
 }
 
 // Test 6: Struct with only a str DST field
-#[make_dst_builder(build_only_str)]
+#[make_dst_factory(build_only_str)]
 struct OnlyStrField {
     content: str,
 }
@@ -98,7 +98,7 @@ fn test_only_str_dst_field() {
 }
 
 // Test 7: Struct with only a slice DST field
-#[make_dst_builder(build_only_slice)]
+#[make_dst_factory(build_only_slice)]
 struct OnlySliceField<T: Clone> {
     items_data: [T],
 }
@@ -111,7 +111,7 @@ fn test_only_slice_dst_field() {
 }
 
 // Test 8: Struct with generics and lifetimes for sized fields, and a str DST
-#[make_dst_builder(build_generic_lifetime_str)]
+#[make_dst_factory(build_generic_lifetime_str)]
 struct GenericLifetimeStrStruct<'a, K: Default> {
     key_ref: &'a K,
     id: usize,
@@ -137,7 +137,7 @@ fn test_generic_lifetime_str_dst() {
 // Test 9: Struct with generics and lifetimes for sized fields, and a str DST
 const SOME_CONST: usize = 2;
 
-#[make_dst_builder]
+#[make_dst_factory]
 struct GenericConstStruct<const SZ: usize> {
     id: usize,
     array_data: [u8; SZ],
@@ -154,7 +154,7 @@ fn test_generic_const_dst() {
 }
 
 // Test 10: Struct with complex field types before DST
-#[make_dst_builder(build_complex_fields)]
+#[make_dst_factory(build_complex_fields)]
 struct ComplexFieldsStruct<T>
 where
     T: Debug,
@@ -182,7 +182,7 @@ fn test_complex_fields_before_dst() {
 }
 
 // Test 11: Struct with a where clause
-#[make_dst_builder(build_from_iter_where_clause)]
+#[make_dst_factory(build_from_iter_where_clause)]
 struct WhereClauseStruct<T>
 where
     T: Copy + Default + PartialEq + std::fmt::Debug,
@@ -202,7 +202,7 @@ fn test_struct_from_iter_where_clause() {
 
 // Test 13 (was 12): Interaction with other derive macros
 #[derive(Debug)]
-#[make_dst_builder(build_derived)]
+#[make_dst_factory(build_derived)]
 struct DerivedExampleStruct {
     id_val: i32,
     name_val: str,
@@ -238,7 +238,7 @@ fn test_empty_dst_str_data() {
 }
 
 // Test 16: Slice of Zero-Sized Types (ZSTs)
-#[make_dst_builder(build_zst_slice)]
+#[make_dst_factory(build_zst_slice)]
 struct ZstSliceStruct {
     metadata: u64,
     unit_slice: [()],

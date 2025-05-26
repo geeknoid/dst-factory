@@ -1,9 +1,9 @@
 # C-like [flexible array members](https://en.wikipedia.org/wiki/Flexible_array_member) for Rust
 
-[![crate.io](https://img.shields.io/crates/v/tail-extend.svg)](https://crates.io/crates/tail-extend)
-[![docs.rs](https://docs.rs/tail-extend/badge.svg)](https://docs.rs/tail-extend)
-[![CI](https://github.com/geeknoid/tail-extend/workflows/main/badge.svg)](https://github.com/geeknoid/tail-extend/actions)
-[![Coverage](https://codecov.io/gh/geeknoid/tail-extend/graph/badge.svg?token=FCUG0EL5TI)](https://codecov.io/gh/geeknoid/tail-extend)
+[![crate.io](https://img.shields.io/crates/v/dst-factory.svg)](https://crates.io/crates/dst-factory)
+[![docs.rs](https://docs.rs/dst-factory/badge.svg)](https://docs.rs/dst-factory)
+[![CI](https://github.com/geeknoid/dst-factory/workflows/main/badge.svg)](https://github.com/geeknoid/dst-factory/actions)
+[![Coverage](https://codecov.io/gh/geeknoid/dst-factory/graph/badge.svg?token=FCUG0EL5TI)](https://codecov.io/gh/geeknoid/dst-factory)
 [![Minimum Supported Rust Version 1.85](https://img.shields.io/badge/MSRV-1.85-blue.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
@@ -26,7 +26,7 @@ not known at compile time. DSTs are perfect to implement flexible array members.
 unfortunately, Rust doesn't provide an out-of-the-box way to allocate instances of such types.
 This is where this crate comes in.
 
-You can apply the `#[make_dst_builder]` attribute to your DST struct which causes factory
+You can apply the `#[make_dst_factory]` attribute to your DST struct which causes factory
 methods to be produced that let you easily and safely create instances of your DST.
 
 ## Example
@@ -34,9 +34,9 @@ methods to be produced that let you easily and safely create instances of your D
 Here's an example using an array as the last field of a struct:
 
 ```rust
-use tail_extend::make_dst_builder;
+use dst_factory::make_dst_factory;
 
-#[make_dst_builder]
+#[make_dst_factory]
 struct User {
     age: u32,
     signing_key: [u8],
@@ -56,9 +56,9 @@ let c = User::build_from_iter(33, iter);
 Here's another example, this time using a string as the last field of a struct:
 
 ```rust
-use tail_extend::make_dst_builder;
+use dst_factory::make_dst_factory;
 
-#[make_dst_builder]
+#[make_dst_factory]
 struct User {
     age: u32,
     name: str,
@@ -76,7 +76,7 @@ and you can't pass them by value. As a result of these constraints, the `build` 
 
 ## Attribute Features
 
-The common use case for the `#[make_dst_builder]` attribute is to not pass any arguments.
+The common use case for the `#[make_dst_factory]` attribute is to not pass any arguments.
 This results in factory methods called `build` when using a string as the last field of the
 struct, and `build` and `build_from_iter` when using an array as the last field of the struct.
 
@@ -99,25 +99,25 @@ visibility, and whether to generate for the `no_std` environment. The general
 grammar is:
 
 ```ignore
-#[make_dst_builder(<base_method_name>[, <visibility>] [, no_std])]
+#[make_dst_factory(<base_method_name>[, <visibility>] [, no_std])]
 ```
 
 Some examples:
 
 ```ignore
 // The factory methods will be private and called `create` and `create_from_iter`
-#[make_dst_builder(create)]
+#[make_dst_factory(create)]
 
 // The factory methods will be public and called `create` and `create_from_iter`
-#[make_dst_builder(create, pub)]
+#[make_dst_factory(create, pub)]
 
 // The factory methods will be private, called `create` and `create_from_iter`, and support the `no_std` environment
-#[make_dst_builder(create, no_std)]
+#[make_dst_factory(create, no_std)]
 ```
 
 ## Error Conditions
 
-The `#[make_dst_builder]` macro produces a compile-time error if:
+The `#[make_dst_factory]` macro produces a compile-time error if:
 
 - It's applied to anything other than a struct with named fields.
 - The struct has no fields (a tail field is essential for a DST).

@@ -1,6 +1,6 @@
-use tail_extend::make_dst_builder;
+use dst_factory::make_dst_factory;
 
-#[make_dst_builder]
+#[make_dst_factory]
 struct MultipleDstFields {
     id: str,
     data: str,

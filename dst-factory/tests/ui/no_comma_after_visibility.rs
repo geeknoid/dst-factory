@@ -1,6 +1,6 @@
-use tail_extend::make_dst_builder;
+use dst_factory::make_dst_factory;
 
-#[make_dst_builder(create, pub no_std)]
+#[make_dst_factory(create, pub no_std)]
 struct NoCommaAfterVisibility {
     id: i32,
     data: str,

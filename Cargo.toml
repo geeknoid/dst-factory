@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
-    "tail-extend",
+    "dst-factory",
     "examples",
 ]
 
@@ -11,14 +11,14 @@ edition = "2024"
 categories = ["memory-management", "no-std"]
 description = "Macros to implement C's flexible array members in Rust"
 keywords = ["memory", "no_std", "ffi"]
-repository = "https://github.com/geeknoid/tail-extend"
+repository = "https://github.com/geeknoid/dst-factory"
 license = "MIT"
 authors = ["Martin Taillefer <martin@taillefer.org>"]
 readme = "README.md"
 rust-version = "1.85.0"
 
 [workspace.dependencies]
-tail-extend = { path = "tail-extend" }
+dst-factory = { path = "dst-factory" }
 quote = "1.0.40"
 syn = { version = "2.0.101", features = ["full", "visit", "extra-traits", "clone-impls"], default-features = false }
 proc-macro2 = "1.0.95"

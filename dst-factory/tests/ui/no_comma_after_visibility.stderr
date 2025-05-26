@@ -1,5 +1,5 @@
 error: Expected comma after visibility
  --> tests/ui/no_comma_after_visibility.rs:3:32
   |
-3 | #[make_dst_builder(create, pub no_std)]
+3 | #[make_dst_factory(create, pub no_std)]
   |                                ^^^^^^

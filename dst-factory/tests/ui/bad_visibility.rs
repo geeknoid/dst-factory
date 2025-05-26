@@ -1,6 +1,6 @@
-use tail_extend::make_dst_builder;
+use dst_factory::make_dst_factory;
 
-#[make_dst_builder(create, XYZ)]
+#[make_dst_factory(create, XYZ)]
 struct BadVisibility {
     id: i32,
     data: str,

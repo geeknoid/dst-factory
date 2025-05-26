@@ -4,7 +4,7 @@
 //! struct that gets allocated on the heap and has some variable-length data associated with it
 //! (like a string or an array), then you can allocate this data directly inline with the struct.
 //! This saves memory by avoiding the need for a pointer and a separate allocation, and saves CPU
-//! cycles by eliminating the need for an indirection when accessing the data.
+//! cycles by eliminating the need for indirection when accessing the data.
 //!
 //! Rust supports the notion of [Dynamically Sized Types](https://doc.rust-lang.org/reference/dynamically-sized-types.html), known as DSTs,
 //! which are types that have a size
@@ -12,7 +12,7 @@
 //! unfortunately, Rust doesn't provide an out-of-the-box way to allocate instances of such types.
 //! This is where this crate comes in.
 //!
-//! You can apply the #[[`macro@make_dst_builder`]] attribute to your DST struct which causes factory
+//! You can apply the #[[`macro@make_dst_factory`]] attribute to your DST struct which causes factory
 //! methods to be produced that let you easily and safely create instances of your DST.
 //!
 //! ## Example
@@ -20,9 +20,9 @@
 //! Here's an example using an array as the last field of a struct:
 //!
 //! ```rust
-//! use tail_extend::make_dst_builder;
+//! use dst_factory::make_dst_factory;
 //!
-//! #[make_dst_builder]
+//! #[make_dst_factory]
 //! struct User {
 //!     age: u32,
 //!     signing_key: [u8],
@@ -42,9 +42,9 @@
 //! Here's another example, this time using a string as the last field of a struct:
 //!
 //! ```rust
-//! use tail_extend::make_dst_builder;
+//! use dst_factory::make_dst_factory;
 //!
-//! #[make_dst_builder]
+//! #[make_dst_factory]
 //! struct User {
 //!     age: u32,
 //!     name: str,
@@ -62,7 +62,7 @@
 //!
 //! ## Attribute Features
 //!
-//! The common use case for the #[[`macro@make_dst_builder`]] attribute is to not pass any arguments.
+//! The common use case for the #[[`macro@make_dst_factory`]] attribute is to not pass any arguments.
 //! This results in factory methods called `build` when using a string as the last field of the
 //! struct, and `build` and `build_from_iter` when using an array as the last field of the struct.
 //!
@@ -81,40 +81,41 @@
 //! ```
 //!
 //! The attribute lets you control the name of the generated factory methods, their
-//! visibility, and whether to generate for the `no_std` environment. The general
+//! visibility, and whether to generate code for the `no_std` environment. The general
 //! grammar is:
 //!
 //! ```ignore
-//! #[make_dst_builder(<base_method_name>[, <visibility>] [, no_std])]
+//! #[make_dst_factory(<base_method_name>[, <visibility>] [, no_std])]
 //! ```
 //!
 //! Some examples:
 //!
 //! ```ignore
 //! // The factory methods will be private and called `create` and `create_from_iter`
-//! #[make_dst_builder(create)]
+//! #[make_dst_factory(create)]
 //!
 //! // The factory methods will be public and called `create` and `create_from_iter`
-//! #[make_dst_builder(create, pub)]
+//! #[make_dst_factory(create, pub)]
 //!
 //! // The factory methods will be private, called `create` and `create_from_iter`, and support the `no_std` environment
-//! #[make_dst_builder(create, no_std)]
+//! #[make_dst_factory(create, no_std)]
 //! ```
 //!
 //! ## Error Conditions
 //!
-//! The #[[`macro@make_dst_builder`]] macro produces a compile-time error if:
+//! The #[[`macro@make_dst_factory`]] attribute produces a compile-time error if:
 //!
 //! - It's applied to anything other than a struct with named fields.
-//! - The struct has no fields (a tail field is essential for a DST).
+//! - Its arguments are malformed (e.g., incorrect visibility keyword, too many arguments).
+//! - The struct has no fields.
 //! - The last field of the struct is not a slice (`[T]`) or a string (`str`).
-//! - The arguments are malformed (e.g., incorrect visibility keyword, too many arguments).
+//! - The resulting struct exceeds the maximum size allowed of `isize::MAX`.
 
 extern crate proc_macro;
 mod macro_args;
 
 use macro_args::MacroArgs;
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use std::collections::HashSet;
 use syn::token::Where;
@@ -154,6 +155,7 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
                 {
                     true
                 }
+
                 _ => {
                     return Err(syn::Error::new_spanned(
                         &last_field.ty,
@@ -213,10 +215,7 @@ fn generate_header_layout_tokens(header_fields: &[&Field]) -> TokenStream {
     header_layout_tokens
 }
 
-fn generate_tail_layout_tokens<T: quote::ToTokens>(
-    tail_type: &T,
-    span: proc_macro2::Span,
-) -> TokenStream {
+fn generate_tail_layout_tokens<T: quote::ToTokens>(tail_type: &T, span: Span) -> TokenStream {
     quote_spanned! { span => ::core::alloc::Layout::array::<#tail_type>(len).expect("Array exceeds maximum size allowed of isize::MAX") }
 }
 
@@ -334,39 +333,39 @@ fn generate_build_fn(
 /// uses can pass arguments with the following grammar:
 ///
 /// ```ignore
-/// #[make_dst_builder(<base_method_name>[, <visibility>] [, no_std])]
+/// #[make_dst_factory(<base_method_name>[, <visibility>] [, no_std])]
 /// ```
 /// Refer to the [crate-level documentation](crate) for more details and example uses.
 ///
 /// # Usage
 ///
 /// ```rust
-/// use tail_extend::make_dst_builder;
+/// use dst_factory::make_dst_factory;
 ///
-/// #[make_dst_builder]
+/// #[make_dst_factory]
 /// struct MyStruct {
 ///     id: u32,
 ///     data: [u8],
 /// }
 ///
 /// // With custom method name and public visibility
-/// #[make_dst_builder(create, pub)]
+/// #[make_dst_factory(create, pub)]
 /// struct PublicStruct {
 ///     id: u32,
 ///     data: str,
 /// }
 /// ```
 #[proc_macro_attribute]
-pub fn make_dst_builder(
+pub fn make_dst_factory(
     attr_args_ts: proc_macro::TokenStream,
     item_ts: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let result = make_dst_builder_impl(attr_args_ts.into(), item_ts.into());
+    let result = make_dst_factory_impl(attr_args_ts.into(), item_ts.into());
     result.unwrap_or_else(|err| err.to_compile_error()).into()
 }
 
 #[allow(clippy::too_many_lines)]
-fn make_dst_builder_impl(
+fn make_dst_factory_impl(
     attr_args_ts: TokenStream,
     item_ts: TokenStream,
 ) -> SynResult<TokenStream> {
@@ -387,7 +386,7 @@ fn make_dst_builder_impl(
     let mut arg_names = field_info
         .header_field_idents
         .iter()
-        .map(std::string::ToString::to_string)
+        .map(ToString::to_string)
         .collect::<HashSet<String>>();
     arg_names.insert(field_info.tail_field_name_ident.to_string());
 
@@ -396,7 +395,7 @@ fn make_dst_builder_impl(
     while arg_names.contains(&tuple_name) {
         tuple_name.push('a');
     }
-    let args_tuple_ident = format_ident!("{}", tuple_name, span = proc_macro2::Span::call_site());
+    let args_tuple_ident = format_ident!("{}", tuple_name, span = Span::call_site());
     let base_method_name = &macro_args.base_method_name;
     let tail_field_name_ident = field_info.tail_field_name_ident;
     let method_name_ident = base_method_name;

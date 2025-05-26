@@ -1,6 +1,6 @@
 [package]
 resolver = "3"
-name = "tail-extend"
+name = "dst-factory"
 description = "Macros to implement C's flexible array members in Rust"
 readme.workspace = true
 authors.workspace = true
@@ -13,7 +13,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [lib]
-name = "tail_extend"
+name = "dst_factory"
 path = "src/lib.rs"
 proc-macro = true
 

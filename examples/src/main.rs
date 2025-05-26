@@ -1,12 +1,12 @@
-use tail_extend::make_dst_builder;
+use dst_factory::make_dst_factory;
 
-#[make_dst_builder(new, pub(crate))]
+#[make_dst_factory(new, pub(crate))]
 struct User {
     age: u8,
     name: str,
 }
 
-#[make_dst_builder]
+#[make_dst_factory]
 struct Credential {
     ttl: u32,
     key: [u16],
