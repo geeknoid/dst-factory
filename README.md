@@ -9,7 +9,7 @@
 
 * [Summary](#summary)
 * [Why Should You Care?](#why-should-you-care)
-* [Examples](#example)
+* [Examples](#examples)
 * [Attribute Features](#attribute-features)
 * [Error Conditions](#error-conditions)
 
