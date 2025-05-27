@@ -82,7 +82,7 @@
 //! fn build(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>
 //! where
 //!     last_field_type: Clone;
-//! 
+//!
 //! fn build_from_iter<I>(field1, field2, ..., last_field: I) -> Box<Self>
 //! where
 //!     I: IntoIterator<Item = last_field_type>,
