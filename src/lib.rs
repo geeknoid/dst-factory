@@ -139,9 +139,9 @@ use syn::{
 struct FieldInfo<'a> {
     header_fields: Box<[&'a Field]>,
     header_field_idents: Box<[&'a Ident]>,
-    build_fn_header_params_tokens: Box<[TokenStream]>,
+    header_params_tokens: Box<[TokenStream]>,
     tail_field: &'a Field,
-    tail_field_name_ident: &'a Ident,
+    tail_field_ident: &'a Ident,
 }
 
 fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
@@ -178,7 +178,7 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
 
             let mut header_fields = Vec::new();
             let mut header_field_idents = Vec::new();
-            let mut build_fn_header_params_tokens = Vec::new();
+            let mut header_params_tokens = Vec::new();
 
             let num_fields = named_fields.named.len();
             for (i, field) in named_fields.named.iter().enumerate() {
@@ -187,19 +187,19 @@ fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
                     let field_ident = field.ident.as_ref().unwrap();
                     header_field_idents.push(field_ident);
                     let field_ty = &field.ty;
-                    build_fn_header_params_tokens.push(quote! { #field_ident: #field_ty });
+                    header_params_tokens.push(quote! { #field_ident: #field_ty });
                 }
             }
 
             let tail_field = named_fields.named.last().unwrap();
-            let tail_field_name_ident = tail_field.ident.as_ref().unwrap();
+            let tail_field_ident = tail_field.ident.as_ref().unwrap();
 
             Ok(FieldInfo {
                 header_fields: header_fields.into_boxed_slice(),
                 header_field_idents: header_field_idents.into_boxed_slice(),
-                build_fn_header_params_tokens: build_fn_header_params_tokens.into_boxed_slice(),
+                header_params_tokens: header_params_tokens.into_boxed_slice(),
                 tail_field,
-                tail_field_name_ident,
+                tail_field_ident,
             })
         }
 
@@ -253,9 +253,9 @@ fn generate_factory(
     } = macro_args;
 
     let FieldInfo {
-        build_fn_header_params_tokens,
+        header_params_tokens,
         header_field_idents,
-        tail_field_name_ident,
+        tail_field_ident,
         ..
     } = field_info;
 
@@ -276,7 +276,7 @@ fn generate_factory(
     let tuple_elements_for_assignment = header_field_idents
         .iter()
         .map(|ident| quote! { #ident })
-        .chain(std::iter::once(quote! { #tail_field_name_ident }))
+        .chain(std::iter::once(quote! { #tail_field_ident }))
         .collect::<Vec<_>>();
 
     let tuple_assignment = quote! {
@@ -298,7 +298,7 @@ fn generate_factory(
         #[allow(clippy::zst_offset)]
         #[allow(clippy::transmute_undefined_repr)]
         #factory_visibility fn #factory_name_ident #factory_generics_tokens (
-            #( #build_fn_header_params_tokens, )*
+            #( #header_params_tokens, )*
             #tail_param_tokens
         ) -> #box_path<Self> #factory_where_clause_tokens {
             #tuple_assignment
@@ -393,7 +393,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
         .iter()
         .map(ToString::to_string)
         .collect::<HashSet<String>>();
-    arg_names.insert(field_info.tail_field_name_ident.to_string());
+    arg_names.insert(field_info.tail_field_ident.to_string());
 
     // Generate a unique name for the tuple (e.g., a, aa, aaa)
     let mut tuple_name = "a".to_string();
@@ -402,7 +402,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
     }
     let args_tuple_ident = format_ident!("{}", tuple_name, span = Span::call_site());
     let base_factory_name = &macro_args.base_factory_name;
-    let tail_field_name_ident = field_info.tail_field_name_ident;
+    let tail_field_ident = field_info.tail_field_ident;
     let factory_name_ident = base_factory_name;
     let num_header_fields = field_info.header_field_idents.len();
     let tail_param_tuple_idx = syn::Index::from(num_header_fields);
@@ -414,7 +414,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
         let factory_doc_string =
             format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.");
 
-        let tail_param_tokens = quote! { #tail_field_name_ident: &[#tail_type] };
+        let tail_param_tokens = quote! { #tail_field_ident: &[#tail_type] };
 
         let clone_predicate_tokens: syn::WherePredicate = syn::parse_quote_spanned! {tail_type.span()=>
             #tail_type: ::core::clone::Clone
@@ -441,7 +441,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             generate_tail_layout_tokens(tail_type, field_info.tail_field.ty.span());
 
         let tail_write_tokens = quote_spanned! {tail_type.span()=>
-            let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_name_ident).cast::<#tail_type>();
+            let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
             for idx in 0..len {
                 let src_val_ref = #args_tuple_ident.#tail_param_tuple_idx.get_unchecked(idx);
                 #[allow(clippy::clone_on_copy)]
@@ -470,7 +470,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             format!("Creates an instance of `Box<{struct_name_ident}>` from an iterator.");
 
         let iter_generic_param_ident = format_ident!("I");
-        let tail_param_tokens = quote! { #tail_field_name_ident: #iter_generic_param_ident };
+        let tail_param_tokens = quote! { #tail_field_ident: #iter_generic_param_ident };
         let factory_generics_tokens = Some(quote! { <#iter_generic_param_ident> });
         let factory_where_clause_tokens = Some(quote! {
             where #iter_generic_param_ident: ::core::iter::IntoIterator<Item = #tail_type>,
@@ -486,7 +486,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             generate_tail_layout_tokens(tail_type, field_info.tail_field.ty.span());
 
         let tail_write_tokens = quote! {
-            let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_name_ident).cast::<#tail_type>();
+            let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
             for (i, element) in iter.enumerate() {
                  ::core::ptr::write(tail_ptr.add(i), element);
             }
@@ -511,7 +511,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
         let factory_doc_string =
             format!("Creates an instance of `Box<{struct_name_ident}>` from a string slice.");
 
-        let tail_param_tokens = quote! { #tail_field_name_ident: impl ::core::convert::AsRef<str> };
+        let tail_param_tokens = quote! { #tail_field_ident: impl ::core::convert::AsRef<str> };
 
         let tail_processing_tokens = quote! {
             let s = #args_tuple_ident.#tail_param_tuple_idx.as_ref();
@@ -522,7 +522,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             generate_tail_layout_tokens(&quote! { u8 }, field_info.tail_field.ty.span());
 
         let tail_write_tokens = quote! {
-            let tail_ptr = (&raw mut (*fat_ptr).#tail_field_name_ident).cast::<u8>();
+            let tail_ptr = (&raw mut (*fat_ptr).#tail_field_ident).cast::<u8>();
             ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
         };
 
