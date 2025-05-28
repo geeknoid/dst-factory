@@ -304,17 +304,20 @@ fn generate_factory(
         ) -> #box_path<Self> #factory_where_clause_tokens {
             #guard_type_tokens
 
+            // Assign the args to a tuple with a unique name to avoid conflicts with arg names in the
+            // rest of this function
             #tuple_assignment
 
             #tail_processing_tokens
 
+            // Calculate the total size of the struct, including the header and tail fields
             #header_layout_tokens
-
             let layout = layout.extend(#tail_layout_tokens).expect("Struct exceeds maximum size allowed of isize::MAX").0;
             let layout = layout.pad_to_align();
 
             unsafe {
                 if layout.size() == 0 {
+                    // Handle ZST case
                     let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
                     let fat_ptr = ::core::mem::transmute::<(*mut (), usize), *mut Self>((mem_ptr, len));
                     #box_path::from_raw(fat_ptr)
@@ -471,6 +474,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             generate_tail_layout_tokens(tail_type, field_info.tail_field.ty.span());
 
         let tail_write_tokens = quote_spanned! {tail_type.span()=>
+            // Clone the slice content into the tail field
             let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
             let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
             for idx in 0..len {
@@ -520,14 +524,13 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             generate_tail_layout_tokens(tail_type, field_info.tail_field.ty.span());
 
         let tail_write_tokens = quote! {
+            // Write each element from the iterator into the tail field
             let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
             let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
-
             for (i, element) in iter.enumerate() {
                 ::core::ptr::write(tail_ptr.add(i), element);
                 guard.initialized += 1;
             }
-
             ::std::mem::forget(guard);
         };
 
@@ -553,7 +556,10 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 
         let tail_param_tokens = quote! { #tail_field_ident: impl ::core::convert::AsRef<str> };
 
+        let tail_type = &field_info.tail_field.ty;
         let tail_processing_tokens = quote! {
+            // Ensure the tail type is an actual string
+            ::core::assert_eq!(::core::any::TypeId::of::<#tail_type>(), ::core::any::TypeId::of::<str>());
             let s = #args_tuple_ident.#tail_param_tuple_idx.as_ref();
             let len = s.len();
         };
@@ -562,6 +568,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             generate_tail_layout_tokens(&quote! { u8 }, field_info.tail_field.ty.span());
 
         let tail_write_tokens = quote! {
+            // copy the string data into the tail field
             let tail_ptr = (&raw mut (*fat_ptr).#tail_field_ident).cast::<u8>();
             ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
         };
