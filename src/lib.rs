@@ -443,7 +443,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
         let tail_write_tokens = quote_spanned! {tail_type.span()=>
             let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
             for idx in 0..len {
-                let src_val_ref = #args_tuple_ident.#tail_param_tuple_idx.get_unchecked(idx);
+                let src_val_ref = #args_tuple_ident.#tail_param_tuple_idx.get(idx).unwrap();
                 #[allow(clippy::clone_on_copy)]
                 let cloned_val = src_val_ref.clone();
                 ::core::ptr::write(tail_ptr.add(idx), cloned_val);
