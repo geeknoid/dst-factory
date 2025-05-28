@@ -137,14 +137,15 @@ use syn::{
 };
 
 struct StructInfo<'a> {
+    struct_name_ident: &'a Ident,
+    struct_generics: &'a Generics,
     header_fields: Box<[&'a Field]>,
     header_field_idents: Box<[&'a Ident]>,
-    header_params_tokens: Box<[TokenStream]>,
     tail_field: &'a Field,
     tail_field_ident: &'a Ident,
 }
 
-impl<'a> StructInfo<'a> {
+impl StructInfo<'_> {
     fn new(input_struct: &ItemStruct) -> SynResult<StructInfo> {
         match &input_struct.fields {
             Fields::Named(named_fields) => {
@@ -164,10 +165,10 @@ impl<'a> StructInfo<'a> {
                     Type::Slice(_) => true,
                     Type::Path(type_path) if type_path.path.is_ident("str") => true,
                     Type::Path(TypePath { path, .. })
-                    if path.segments.last().is_some_and(|s| s.ident == "str") =>
-                        {
-                            true
-                        }
+                        if path.segments.last().is_some_and(|s| s.ident == "str") =>
+                    {
+                        true
+                    }
 
                     _ => {
                         return Err(syn::Error::new_spanned(
@@ -179,16 +180,12 @@ impl<'a> StructInfo<'a> {
 
                 let mut header_fields = Vec::new();
                 let mut header_field_idents = Vec::new();
-                let mut header_params_tokens = Vec::new();
 
                 let num_fields = named_fields.named.len();
                 for (i, field) in named_fields.named.iter().enumerate() {
                     if i < num_fields - 1 {
                         header_fields.push(field);
-                        let field_ident = field.ident.as_ref().unwrap();
-                        header_field_idents.push(field_ident);
-                        let field_ty = &field.ty;
-                        header_params_tokens.push(quote! { #field_ident: #field_ty });
+                        header_field_idents.push(field.ident.as_ref().unwrap());
                     }
                 }
 
@@ -196,9 +193,10 @@ impl<'a> StructInfo<'a> {
                 let tail_field_ident = tail_field.ident.as_ref().unwrap();
 
                 Ok(StructInfo {
+                    struct_name_ident: &input_struct.ident,
+                    struct_generics: &input_struct.generics,
                     header_fields: header_fields.into_boxed_slice(),
                     header_field_idents: header_field_idents.into_boxed_slice(),
-                    header_params_tokens: header_params_tokens.into_boxed_slice(),
                     tail_field,
                     tail_field_ident,
                 })
@@ -256,7 +254,6 @@ fn generate_factory_common(
     } = macro_args;
 
     let StructInfo {
-        header_params_tokens,
         header_field_idents,
         tail_field_ident,
         ..
@@ -294,6 +291,13 @@ fn generate_factory_common(
                 let tuple_idx = syn::Index::from(idx);
                 quote! { ::core::ptr::write(&mut ((*fat_ptr).#field_ident_on_struct), #args_tuple_ident.#tuple_idx);}
             });
+
+    let mut header_params_tokens = Vec::new();
+    for field in &struct_info.header_fields {
+        let field_ident = field.ident.as_ref().unwrap();
+        let field_ty = &field.ty;
+        header_params_tokens.push(quote! { #field_ident: #field_ty });
+    }
 
     quote! {
         #[doc = #factory_doc_string]
@@ -346,8 +350,6 @@ fn generate_factory_common(
 #[allow(clippy::too_many_arguments)]
 fn generate_factory_for_slice_arg(
     macro_args: &MacroArgs,
-    struct_name_ident: &Ident,
-    struct_generics: &Generics,
     struct_info: &StructInfo,
     header_layout_tokens: &TokenStream,
     args_tuple_ident: &Ident,
@@ -357,6 +359,7 @@ fn generate_factory_for_slice_arg(
     tail_type: &Type,
     guard_type_tokens: Option<&TokenStream>,
 ) -> TokenStream {
+    let struct_name_ident = &struct_info.struct_name_ident;
     let factory_name_ident = base_factory_name;
     let factory_doc_string =
         format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.");
@@ -367,14 +370,14 @@ fn generate_factory_for_slice_arg(
         #tail_type: ::core::clone::Clone
     };
 
-    let mut final_where_clause =
-        struct_generics
-            .where_clause
-            .clone()
-            .unwrap_or_else(|| syn::WhereClause {
-                where_token: Where::default(),
-                predicates: Punctuated::new(),
-            });
+    let mut final_where_clause = struct_info
+        .struct_generics
+        .where_clause
+        .clone()
+        .unwrap_or_else(|| syn::WhereClause {
+            where_token: Where::default(),
+            predicates: Punctuated::new(),
+        });
 
     final_where_clause.predicates.push(clone_predicate_tokens);
 
@@ -421,7 +424,6 @@ fn generate_factory_for_slice_arg(
 #[allow(clippy::too_many_arguments)]
 fn generate_factory_for_iter_arg(
     macro_args: &MacroArgs,
-    struct_name_ident: &Ident,
     struct_info: &StructInfo,
     header_layout_tokens: &TokenStream,
     args_tuple_ident: &Ident,
@@ -431,6 +433,7 @@ fn generate_factory_for_iter_arg(
     tail_type: &Type,
     guard_type_tokens: Option<&TokenStream>,
 ) -> TokenStream {
+    let struct_name_ident = &struct_info.struct_name_ident;
     let factory_name_ident = format_ident!("{}_from_iter", base_factory_name);
     let factory_doc_string =
         format!("Creates an instance of `Box<{struct_name_ident}>` from an iterator.");
@@ -482,7 +485,6 @@ fn generate_factory_for_iter_arg(
 #[allow(clippy::too_many_arguments)]
 fn generate_factory_for_str_arg(
     macro_args: &MacroArgs,
-    struct_name_ident: &Ident,
     struct_info: &StructInfo,
     header_layout_tokens: &TokenStream,
     args_tuple_ident: &Ident,
@@ -490,6 +492,7 @@ fn generate_factory_for_str_arg(
     tail_field_ident: &Ident,
     tail_param_tuple_idx: &Index,
 ) -> TokenStream {
+    let struct_name_ident = &struct_info.struct_name_ident;
     let factory_name_ident = base_factory_name;
     let factory_doc_string =
         format!("Creates an instance of `Box<{struct_name_ident}>` from a string slice.");
@@ -530,56 +533,12 @@ fn generate_factory_for_str_arg(
     )
 }
 
-/// Generate factory functions for dynamically sized types (DST) structs.
-///
-/// This macro, when applied to a struct whose last field is a slice (`[T]`) or `str`,
-/// generates an `impl` block with functions to construct instances of the structs with
-/// dynamically sized tail data.
-///
-/// This attribute is generally used without any arguments, but more advanced
-/// uses can pass arguments with the following grammar:
-///
-/// ```ignore
-/// #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std])]
-/// ```
-/// Refer to the [crate-level documentation](crate) for more details and example uses.
-///
-/// # Usage
-///
-/// ```rust
-/// use dst_factory::make_dst_factory;
-///
-/// #[make_dst_factory]
-/// struct MyStruct {
-///     id: u32,
-///     data: [u8],
-/// }
-///
-/// // With custom factory name and public visibility
-/// #[make_dst_factory(create, pub)]
-/// struct PublicStruct {
-///     id: u32,
-///     data: str,
-/// }
-/// ```
-#[proc_macro_attribute]
-pub fn make_dst_factory(
-    attr_args_ts: proc_macro::TokenStream,
-    item_ts: proc_macro::TokenStream,
-) -> proc_macro::TokenStream {
-    let result = make_dst_factory_impl(attr_args_ts.into(), item_ts.into());
-    result.unwrap_or_else(|err| err.to_compile_error()).into()
-}
-
-#[allow(clippy::too_many_lines)]
 fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult<TokenStream> {
     let macro_args = MacroArgs::parse(attr_args)?;
     let input_struct: ItemStruct = syn::parse2(item)?;
 
-    let struct_name_ident = &input_struct.ident;
-    let struct_generics = &input_struct.generics;
-    let (impl_generics, ty_generics, where_clause) = struct_generics.split_for_impl();
     let struct_info = StructInfo::new(&input_struct)?;
+    let (impl_generics, ty_generics, where_clause) = struct_info.struct_generics.split_for_impl();
     let header_layout_tokens = generate_header_layout_tokens(&struct_info.header_fields);
     let mut generated_factories = Vec::new();
 
@@ -635,8 +594,6 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 
         generated_factories.push(generate_factory_for_slice_arg(
             &macro_args,
-            struct_name_ident,
-            struct_generics,
             &struct_info,
             &header_layout_tokens,
             &args_tuple_ident,
@@ -649,7 +606,6 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 
         generated_factories.push(generate_factory_for_iter_arg(
             &macro_args,
-            struct_name_ident,
             &struct_info,
             &header_layout_tokens,
             &args_tuple_ident,
@@ -662,7 +618,6 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
     } else {
         generated_factories.push(generate_factory_for_str_arg(
             &macro_args,
-            struct_name_ident,
             &struct_info,
             &header_layout_tokens,
             &args_tuple_ident,
@@ -672,6 +627,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
         ));
     }
 
+    let struct_name_ident = &struct_info.struct_name_ident;
     Ok(quote! {
         #[repr(C)]
         #input_struct
@@ -680,4 +636,45 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             #( #generated_factories )*
         }
     })
+}
+
+/// Generate factory functions for dynamically sized types (DST) structs.
+///
+/// This macro, when applied to a struct whose last field is a slice (`[T]`) or `str`,
+/// generates an `impl` block with functions to construct instances of the structs with
+/// dynamically sized tail data.
+///
+/// This attribute is generally used without any arguments, but more advanced
+/// uses can pass arguments with the following grammar:
+///
+/// ```ignore
+/// #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std])]
+/// ```
+/// Refer to the [crate-level documentation](crate) for more details and example uses.
+///
+/// # Usage
+///
+/// ```rust
+/// use dst_factory::make_dst_factory;
+///
+/// #[make_dst_factory]
+/// struct MyStruct {
+///     id: u32,
+///     data: [u8],
+/// }
+///
+/// // With custom factory name and public visibility
+/// #[make_dst_factory(create, pub)]
+/// struct PublicStruct {
+///     id: u32,
+///     data: str,
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn make_dst_factory(
+    attr_args_ts: proc_macro::TokenStream,
+    item_ts: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    let result = make_dst_factory_impl(attr_args_ts.into(), item_ts.into());
+    result.unwrap_or_else(|err| err.to_compile_error()).into()
 }
