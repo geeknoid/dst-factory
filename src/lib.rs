@@ -239,6 +239,7 @@ fn generate_factory(
     factory_doc_string: &String,
     factory_generics_tokens: Option<&TokenStream>,
     factory_where_clause_tokens: Option<&TokenStream>,
+    guard_type_tokens: Option<&TokenStream>,
     args_tuple_ident: &Ident,
     header_layout_tokens: &TokenStream,
     tail_param_tokens: &TokenStream,
@@ -301,6 +302,8 @@ fn generate_factory(
             #( #header_params_tokens, )*
             #tail_param_tokens
         ) -> #box_path<Self> #factory_where_clause_tokens {
+            #guard_type_tokens
+
             #tuple_assignment
 
             #tail_processing_tokens
@@ -433,6 +436,33 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 
         let factory_where_clause_tokens = Some(quote! { #final_where_clause });
 
+        let dealloc_path = if macro_args.no_std {
+            quote! { ::alloc::alloc::dealloc }
+        } else {
+            quote! { ::std::alloc::dealloc }
+        };
+
+        let guard_type_tokens = Some(quote! {
+            struct Guard<T> {
+                mem_ptr: *mut u8,
+                tail_ptr: *mut T,
+                initialized: usize,
+                layout: ::core::alloc::Layout,
+            }
+
+            impl<T> Drop for Guard<T> {
+                fn drop(&mut self) {
+                    unsafe {
+                        for i in 0..self.initialized {
+                            ::core::ptr::drop_in_place(self.tail_ptr.add(i));
+                        }
+
+                        #dealloc_path(self.mem_ptr, self.layout);
+                    }
+                }
+            }
+        });
+
         let tail_processing_tokens = quote! {
             let len = #args_tuple_ident.#tail_param_tuple_idx.len();
         };
@@ -442,12 +472,15 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 
         let tail_write_tokens = quote_spanned! {tail_type.span()=>
             let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
+            let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
             for idx in 0..len {
                 let src_val_ref = #args_tuple_ident.#tail_param_tuple_idx.get(idx).unwrap();
                 #[allow(clippy::clone_on_copy)]
                 let cloned_val = src_val_ref.clone();
                 ::core::ptr::write(tail_ptr.add(idx), cloned_val);
+                guard.initialized += 1;
             }
+            ::std::mem::forget(guard);
         };
 
         generated_factories.push(generate_factory(
@@ -457,6 +490,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             &factory_doc_string,
             None, // factory_generics_tokens
             factory_where_clause_tokens.as_ref(),
+            guard_type_tokens.as_ref(),
             &args_tuple_ident,
             &header_layout_tokens,
             &tail_param_tokens,
@@ -487,9 +521,14 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 
         let tail_write_tokens = quote! {
             let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
+            let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
+
             for (i, element) in iter.enumerate() {
-                 ::core::ptr::write(tail_ptr.add(i), element);
+                ::core::ptr::write(tail_ptr.add(i), element);
+                guard.initialized += 1;
             }
+
+            ::std::mem::forget(guard);
         };
 
         generated_factories.push(generate_factory(
@@ -499,6 +538,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             &factory_doc_string,
             factory_generics_tokens.as_ref(),
             factory_where_clause_tokens.as_ref(),
+            guard_type_tokens.as_ref(),
             &args_tuple_ident,
             &header_layout_tokens,
             &tail_param_tokens,
@@ -532,7 +572,8 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             factory_name_ident,
             &factory_doc_string,
             None, // factory_generics_tokens
-            None,
+            None, // factory_where_clause_tokens
+            None, // guard_type_tokens
             &args_tuple_ident,
             &header_layout_tokens,
             &tail_param_tokens,
