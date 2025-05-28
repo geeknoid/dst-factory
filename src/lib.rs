@@ -333,6 +333,7 @@ fn generate_factory(
 
                     #tail_write_tokens
 
+                    ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
                     #box_path::from_raw(fat_ptr)
                 }
             }
