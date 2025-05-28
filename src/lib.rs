@@ -132,11 +132,11 @@ use quote::{format_ident, quote, quote_spanned};
 use std::collections::HashSet;
 use syn::token::Where;
 use syn::{
-    Field, Fields, Ident, ItemStruct, Type, TypePath, TypeSlice, parse::Result as SynResult,
-    punctuated::Punctuated, spanned::Spanned,
+    Field, Fields, Generics, Ident, Index, ItemStruct, Type, TypePath, TypeSlice,
+    parse::Result as SynResult, punctuated::Punctuated, spanned::Spanned,
 };
 
-struct FieldInfo<'a> {
+struct StructInfo<'a> {
     header_fields: Box<[&'a Field]>,
     header_field_idents: Box<[&'a Ident]>,
     header_params_tokens: Box<[TokenStream]>,
@@ -144,69 +144,71 @@ struct FieldInfo<'a> {
     tail_field_ident: &'a Ident,
 }
 
-fn extract_field_info(input_struct: &ItemStruct) -> SynResult<FieldInfo> {
-    match &input_struct.fields {
-        Fields::Named(named_fields) => {
-            if named_fields.named.is_empty() {
-                return Err(syn::Error::new_spanned(
-                    named_fields,
-                    "Struct must have at least one field",
-                ));
-            }
-
-            // Split fields into header fields (all but last) and the tail field (last)
-            let mut fields_iter = named_fields.named.iter();
-            let last_field = fields_iter.next_back().unwrap(); // Safe because we checked for emptiness above
-
-            // Verify the last field is a DST with unsized type [T] or str
-            match &last_field.ty {
-                Type::Slice(_) => true,
-                Type::Path(type_path) if type_path.path.is_ident("str") => true,
-                Type::Path(TypePath { path, .. })
-                    if path.segments.last().is_some_and(|s| s.ident == "str") =>
-                {
-                    true
-                }
-
-                _ => {
+impl<'a> StructInfo<'a> {
+    fn new(input_struct: &ItemStruct) -> SynResult<StructInfo> {
+        match &input_struct.fields {
+            Fields::Named(named_fields) => {
+                if named_fields.named.is_empty() {
                     return Err(syn::Error::new_spanned(
-                        &last_field.ty,
-                        "Last field must be a dynamically sized type like [T] or str",
+                        named_fields,
+                        "Struct must have at least one field",
                     ));
                 }
-            };
 
-            let mut header_fields = Vec::new();
-            let mut header_field_idents = Vec::new();
-            let mut header_params_tokens = Vec::new();
+                // Split fields into header fields (all but last) and the tail field (last)
+                let mut fields_iter = named_fields.named.iter();
+                let last_field = fields_iter.next_back().unwrap(); // Safe because we checked for emptiness above
 
-            let num_fields = named_fields.named.len();
-            for (i, field) in named_fields.named.iter().enumerate() {
-                if i < num_fields - 1 {
-                    header_fields.push(field);
-                    let field_ident = field.ident.as_ref().unwrap();
-                    header_field_idents.push(field_ident);
-                    let field_ty = &field.ty;
-                    header_params_tokens.push(quote! { #field_ident: #field_ty });
+                // Verify the last field is a DST with unsized type [T] or str
+                match &last_field.ty {
+                    Type::Slice(_) => true,
+                    Type::Path(type_path) if type_path.path.is_ident("str") => true,
+                    Type::Path(TypePath { path, .. })
+                    if path.segments.last().is_some_and(|s| s.ident == "str") =>
+                        {
+                            true
+                        }
+
+                    _ => {
+                        return Err(syn::Error::new_spanned(
+                            &last_field.ty,
+                            "Last field must be a dynamically sized type like [T] or str",
+                        ));
+                    }
+                };
+
+                let mut header_fields = Vec::new();
+                let mut header_field_idents = Vec::new();
+                let mut header_params_tokens = Vec::new();
+
+                let num_fields = named_fields.named.len();
+                for (i, field) in named_fields.named.iter().enumerate() {
+                    if i < num_fields - 1 {
+                        header_fields.push(field);
+                        let field_ident = field.ident.as_ref().unwrap();
+                        header_field_idents.push(field_ident);
+                        let field_ty = &field.ty;
+                        header_params_tokens.push(quote! { #field_ident: #field_ty });
+                    }
                 }
+
+                let tail_field = named_fields.named.last().unwrap();
+                let tail_field_ident = tail_field.ident.as_ref().unwrap();
+
+                Ok(StructInfo {
+                    header_fields: header_fields.into_boxed_slice(),
+                    header_field_idents: header_field_idents.into_boxed_slice(),
+                    header_params_tokens: header_params_tokens.into_boxed_slice(),
+                    tail_field,
+                    tail_field_ident,
+                })
             }
 
-            let tail_field = named_fields.named.last().unwrap();
-            let tail_field_ident = tail_field.ident.as_ref().unwrap();
-
-            Ok(FieldInfo {
-                header_fields: header_fields.into_boxed_slice(),
-                header_field_idents: header_field_idents.into_boxed_slice(),
-                header_params_tokens: header_params_tokens.into_boxed_slice(),
-                tail_field,
-                tail_field_ident,
-            })
+            Fields::Unnamed(_) | Fields::Unit => Err(syn::Error::new_spanned(
+                &input_struct.fields,
+                "Structs with unnamed fields are not supported",
+            )),
         }
-
-        Fields::Unnamed(_) | Fields::Unit => Err(syn::Error::new_spanned(
-            &input_struct.fields,
-            "Structs with unnamed fields are not supported",
-        )),
     }
 }
 
@@ -232,9 +234,9 @@ fn generate_tail_layout_tokens<T: quote::ToTokens>(tail_type: &T, span: Span) ->
 }
 
 #[allow(clippy::too_many_arguments)]
-fn generate_factory(
+fn generate_factory_common(
     macro_args: &MacroArgs,
-    field_info: &FieldInfo<'_>,
+    struct_info: &StructInfo<'_>,
     factory_name_ident: &Ident,
     factory_doc_string: &String,
     factory_generics_tokens: Option<&TokenStream>,
@@ -253,12 +255,12 @@ fn generate_factory(
         ..
     } = macro_args;
 
-    let FieldInfo {
+    let StructInfo {
         header_params_tokens,
         header_field_idents,
         tail_field_ident,
         ..
-    } = field_info;
+    } = struct_info;
 
     let (box_path, alloc_path, handle_alloc_error) = if *no_std {
         (
@@ -341,6 +343,193 @@ fn generate_factory(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn generate_factory_for_slice_arg(
+    macro_args: &MacroArgs,
+    struct_name_ident: &Ident,
+    struct_generics: &Generics,
+    struct_info: &StructInfo,
+    header_layout_tokens: &TokenStream,
+    args_tuple_ident: &Ident,
+    base_factory_name: &Ident,
+    tail_field_ident: &Ident,
+    tail_param_tuple_idx: &Index,
+    tail_type: &Type,
+    guard_type_tokens: Option<&TokenStream>,
+) -> TokenStream {
+    let factory_name_ident = base_factory_name;
+    let factory_doc_string =
+        format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.");
+
+    let tail_param_tokens = quote! { #tail_field_ident: &[#tail_type] };
+
+    let clone_predicate_tokens: syn::WherePredicate = syn::parse_quote_spanned! {tail_type.span()=>
+        #tail_type: ::core::clone::Clone
+    };
+
+    let mut final_where_clause =
+        struct_generics
+            .where_clause
+            .clone()
+            .unwrap_or_else(|| syn::WhereClause {
+                where_token: Where::default(),
+                predicates: Punctuated::new(),
+            });
+
+    final_where_clause.predicates.push(clone_predicate_tokens);
+
+    let factory_where_clause_tokens = Some(quote! { #final_where_clause });
+
+    let tail_processing_tokens = quote! {
+        let len = #args_tuple_ident.#tail_param_tuple_idx.len();
+    };
+
+    let tail_layout_tokens =
+        generate_tail_layout_tokens(tail_type, struct_info.tail_field.ty.span());
+
+    let tail_write_tokens = quote_spanned! {tail_type.span()=>
+        // Clone the slice content into the tail field
+        let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
+        let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
+        for idx in 0..len {
+            let src_val_ref = #args_tuple_ident.#tail_param_tuple_idx.get(idx).unwrap();
+            #[allow(clippy::clone_on_copy)]
+            let cloned_val = src_val_ref.clone();
+            ::core::ptr::write(tail_ptr.add(idx), cloned_val);
+            guard.initialized += 1;
+        }
+        ::std::mem::forget(guard);
+    };
+
+    generate_factory_common(
+        macro_args,
+        struct_info,
+        factory_name_ident,
+        &factory_doc_string,
+        None, // factory_generics_tokens
+        factory_where_clause_tokens.as_ref(),
+        guard_type_tokens,
+        args_tuple_ident,
+        header_layout_tokens,
+        &tail_param_tokens,
+        &tail_layout_tokens,
+        &tail_processing_tokens,
+        &tail_write_tokens,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_factory_for_iter_arg(
+    macro_args: &MacroArgs,
+    struct_name_ident: &Ident,
+    struct_info: &StructInfo,
+    header_layout_tokens: &TokenStream,
+    args_tuple_ident: &Ident,
+    base_factory_name: &Ident,
+    tail_field_ident: &Ident,
+    tail_param_tuple_idx: &Index,
+    tail_type: &Type,
+    guard_type_tokens: Option<&TokenStream>,
+) -> TokenStream {
+    let factory_name_ident = format_ident!("{}_from_iter", base_factory_name);
+    let factory_doc_string =
+        format!("Creates an instance of `Box<{struct_name_ident}>` from an iterator.");
+
+    let iter_generic_param_ident = format_ident!("I");
+    let tail_param_tokens = quote! { #tail_field_ident: #iter_generic_param_ident };
+    let factory_generics_tokens = Some(quote! { <#iter_generic_param_ident> });
+    let factory_where_clause_tokens = Some(quote! {
+        where #iter_generic_param_ident: ::core::iter::IntoIterator<Item = #tail_type>,
+              <#iter_generic_param_ident as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator
+    });
+
+    let tail_processing_tokens = quote! {
+        let iter = #args_tuple_ident.#tail_param_tuple_idx.into_iter();
+        let len = iter.len();
+    };
+
+    let tail_layout_tokens =
+        generate_tail_layout_tokens(tail_type, struct_info.tail_field.ty.span());
+
+    let tail_write_tokens = quote! {
+        // Write each element from the iterator into the tail field
+        let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
+        let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
+        for (i, element) in iter.enumerate() {
+            ::core::ptr::write(tail_ptr.add(i), element);
+            guard.initialized += 1;
+        }
+        ::std::mem::forget(guard);
+    };
+
+    generate_factory_common(
+        macro_args,
+        struct_info,
+        &factory_name_ident,
+        &factory_doc_string,
+        factory_generics_tokens.as_ref(),
+        factory_where_clause_tokens.as_ref(),
+        guard_type_tokens,
+        args_tuple_ident,
+        header_layout_tokens,
+        &tail_param_tokens,
+        &tail_layout_tokens,
+        &tail_processing_tokens,
+        &tail_write_tokens,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_factory_for_str_arg(
+    macro_args: &MacroArgs,
+    struct_name_ident: &Ident,
+    struct_info: &StructInfo,
+    header_layout_tokens: &TokenStream,
+    args_tuple_ident: &Ident,
+    base_factory_name: &Ident,
+    tail_field_ident: &Ident,
+    tail_param_tuple_idx: &Index,
+) -> TokenStream {
+    let factory_name_ident = base_factory_name;
+    let factory_doc_string =
+        format!("Creates an instance of `Box<{struct_name_ident}>` from a string slice.");
+
+    let tail_param_tokens = quote! { #tail_field_ident: impl ::core::convert::AsRef<str> };
+
+    let tail_type = &struct_info.tail_field.ty;
+    let tail_processing_tokens = quote! {
+        // Ensure the tail type is an actual string
+        ::core::assert_eq!(::core::any::TypeId::of::<#tail_type>(), ::core::any::TypeId::of::<str>());
+        let s = #args_tuple_ident.#tail_param_tuple_idx.as_ref();
+        let len = s.len();
+    };
+
+    let tail_layout_tokens =
+        generate_tail_layout_tokens(&quote! { u8 }, struct_info.tail_field.ty.span());
+
+    let tail_write_tokens = quote! {
+        // copy the string data into the tail field
+        let tail_ptr = (&raw mut (*fat_ptr).#tail_field_ident).cast::<u8>();
+        ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+    };
+
+    generate_factory_common(
+        macro_args,
+        struct_info,
+        factory_name_ident,
+        &factory_doc_string,
+        None, // factory_generics_tokens
+        None, // factory_where_clause_tokens
+        None, // guard_type_tokens
+        args_tuple_ident,
+        header_layout_tokens,
+        &tail_param_tokens,
+        &tail_layout_tokens, // factory_where_clause_tokens
+        &tail_processing_tokens,
+        &tail_write_tokens,
+    )
+}
+
 /// Generate factory functions for dynamically sized types (DST) structs.
 ///
 /// This macro, when applied to a struct whose last field is a slice (`[T]`) or `str`,
@@ -390,17 +579,17 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
     let struct_name_ident = &input_struct.ident;
     let struct_generics = &input_struct.generics;
     let (impl_generics, ty_generics, where_clause) = struct_generics.split_for_impl();
-    let field_info = extract_field_info(&input_struct)?;
-    let header_layout_tokens = generate_header_layout_tokens(&field_info.header_fields);
+    let struct_info = StructInfo::new(&input_struct)?;
+    let header_layout_tokens = generate_header_layout_tokens(&struct_info.header_fields);
     let mut generated_factories = Vec::new();
 
     // Collect incoming argument names from the signature to avoid collision for the tuple variable
-    let mut arg_names = field_info
+    let mut arg_names = struct_info
         .header_field_idents
         .iter()
         .map(ToString::to_string)
         .collect::<HashSet<String>>();
-    arg_names.insert(field_info.tail_field_ident.to_string());
+    arg_names.insert(struct_info.tail_field_ident.to_string());
 
     // Generate a unique name for the tuple (e.g., a, aa, aaa)
     let mut tuple_name = "a".to_string();
@@ -409,37 +598,14 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
     }
     let args_tuple_ident = format_ident!("{}", tuple_name, span = Span::call_site());
     let base_factory_name = &macro_args.base_factory_name;
-    let tail_field_ident = field_info.tail_field_ident;
-    let factory_name_ident = base_factory_name;
-    let num_header_fields = field_info.header_field_idents.len();
+    let tail_field_ident = struct_info.tail_field_ident;
+    let num_header_fields = struct_info.header_field_idents.len();
     let tail_param_tuple_idx = syn::Index::from(num_header_fields);
 
     if let Type::Slice(TypeSlice {
         elem: tail_type, ..
-    }) = &field_info.tail_field.ty
+    }) = &struct_info.tail_field.ty
     {
-        let factory_doc_string =
-            format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.");
-
-        let tail_param_tokens = quote! { #tail_field_ident: &[#tail_type] };
-
-        let clone_predicate_tokens: syn::WherePredicate = syn::parse_quote_spanned! {tail_type.span()=>
-            #tail_type: ::core::clone::Clone
-        };
-
-        let mut final_where_clause =
-            struct_generics
-                .where_clause
-                .clone()
-                .unwrap_or_else(|| syn::WhereClause {
-                    where_token: Where::default(),
-                    predicates: Punctuated::new(),
-                });
-
-        final_where_clause.predicates.push(clone_predicate_tokens);
-
-        let factory_where_clause_tokens = Some(quote! { #final_where_clause });
-
         let dealloc_path = if macro_args.no_std {
             quote! { ::alloc::alloc::dealloc }
         } else {
@@ -467,127 +633,42 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             }
         });
 
-        let tail_processing_tokens = quote! {
-            let len = #args_tuple_ident.#tail_param_tuple_idx.len();
-        };
-
-        let tail_layout_tokens =
-            generate_tail_layout_tokens(tail_type, field_info.tail_field.ty.span());
-
-        let tail_write_tokens = quote_spanned! {tail_type.span()=>
-            // Clone the slice content into the tail field
-            let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
-            let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
-            for idx in 0..len {
-                let src_val_ref = #args_tuple_ident.#tail_param_tuple_idx.get(idx).unwrap();
-                #[allow(clippy::clone_on_copy)]
-                let cloned_val = src_val_ref.clone();
-                ::core::ptr::write(tail_ptr.add(idx), cloned_val);
-                guard.initialized += 1;
-            }
-            ::std::mem::forget(guard);
-        };
-
-        generated_factories.push(generate_factory(
+        generated_factories.push(generate_factory_for_slice_arg(
             &macro_args,
-            &field_info,
-            factory_name_ident,
-            &factory_doc_string,
-            None, // factory_generics_tokens
-            factory_where_clause_tokens.as_ref(),
-            guard_type_tokens.as_ref(),
-            &args_tuple_ident,
+            struct_name_ident,
+            struct_generics,
+            &struct_info,
             &header_layout_tokens,
-            &tail_param_tokens,
-            &tail_layout_tokens,
-            &tail_processing_tokens,
-            &tail_write_tokens,
+            &args_tuple_ident,
+            base_factory_name,
+            tail_field_ident,
+            &tail_param_tuple_idx,
+            tail_type,
+            guard_type_tokens.as_ref(),
         ));
 
-        let factory_name_ident = format_ident!("{}_from_iter", base_factory_name);
-        let factory_doc_string =
-            format!("Creates an instance of `Box<{struct_name_ident}>` from an iterator.");
-
-        let iter_generic_param_ident = format_ident!("I");
-        let tail_param_tokens = quote! { #tail_field_ident: #iter_generic_param_ident };
-        let factory_generics_tokens = Some(quote! { <#iter_generic_param_ident> });
-        let factory_where_clause_tokens = Some(quote! {
-            where #iter_generic_param_ident: ::core::iter::IntoIterator<Item = #tail_type>,
-                  <#iter_generic_param_ident as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator
-        });
-
-        let tail_processing_tokens = quote! {
-            let iter = #args_tuple_ident.#tail_param_tuple_idx.into_iter();
-            let len = iter.len();
-        };
-
-        let tail_layout_tokens =
-            generate_tail_layout_tokens(tail_type, field_info.tail_field.ty.span());
-
-        let tail_write_tokens = quote! {
-            // Write each element from the iterator into the tail field
-            let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
-            let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
-            for (i, element) in iter.enumerate() {
-                ::core::ptr::write(tail_ptr.add(i), element);
-                guard.initialized += 1;
-            }
-            ::std::mem::forget(guard);
-        };
-
-        generated_factories.push(generate_factory(
+        generated_factories.push(generate_factory_for_iter_arg(
             &macro_args,
-            &field_info,
-            &factory_name_ident,
-            &factory_doc_string,
-            factory_generics_tokens.as_ref(),
-            factory_where_clause_tokens.as_ref(),
-            guard_type_tokens.as_ref(),
-            &args_tuple_ident,
+            struct_name_ident,
+            &struct_info,
             &header_layout_tokens,
-            &tail_param_tokens,
-            &tail_layout_tokens,
-            &tail_processing_tokens,
-            &tail_write_tokens,
+            &args_tuple_ident,
+            base_factory_name,
+            tail_field_ident,
+            &tail_param_tuple_idx,
+            tail_type,
+            guard_type_tokens.as_ref(),
         ));
     } else {
-        let factory_name_ident = base_factory_name;
-        let factory_doc_string =
-            format!("Creates an instance of `Box<{struct_name_ident}>` from a string slice.");
-
-        let tail_param_tokens = quote! { #tail_field_ident: impl ::core::convert::AsRef<str> };
-
-        let tail_type = &field_info.tail_field.ty;
-        let tail_processing_tokens = quote! {
-            // Ensure the tail type is an actual string
-            ::core::assert_eq!(::core::any::TypeId::of::<#tail_type>(), ::core::any::TypeId::of::<str>());
-            let s = #args_tuple_ident.#tail_param_tuple_idx.as_ref();
-            let len = s.len();
-        };
-
-        let tail_layout_tokens =
-            generate_tail_layout_tokens(&quote! { u8 }, field_info.tail_field.ty.span());
-
-        let tail_write_tokens = quote! {
-            // copy the string data into the tail field
-            let tail_ptr = (&raw mut (*fat_ptr).#tail_field_ident).cast::<u8>();
-            ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
-        };
-
-        generated_factories.push(generate_factory(
+        generated_factories.push(generate_factory_for_str_arg(
             &macro_args,
-            &field_info,
-            factory_name_ident,
-            &factory_doc_string,
-            None, // factory_generics_tokens
-            None, // factory_where_clause_tokens
-            None, // guard_type_tokens
-            &args_tuple_ident,
+            struct_name_ident,
+            &struct_info,
             &header_layout_tokens,
-            &tail_param_tokens,
-            &tail_layout_tokens, // factory_where_clause_tokens
-            &tail_processing_tokens,
-            &tail_write_tokens,
+            &args_tuple_ident,
+            base_factory_name,
+            tail_field_ident,
+            &tail_param_tuple_idx,
         ));
     }
 
