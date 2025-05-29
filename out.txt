@@ -1,0 +1,390 @@
+#![feature(prelude_import)]
+#[prelude_import]
+use std::prelude::rust_2024::*;
+#[macro_use]
+extern crate std;
+use dst_factory::make_dst_factory;
+#[repr(C)]
+struct User {
+    age: u8,
+    name: str,
+}
+impl User {
+    ///Creates an instance of `Box<User>` from a string slice.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    pub(crate) fn new(
+        age: u8,
+        name: impl ::core::convert::AsRef<str>,
+    ) -> ::std::boxed::Box<Self> {
+        let a = (age, name);
+        match (&::core::any::TypeId::of::<str>(), &::core::any::TypeId::of::<str>()) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        let s = a.1.as_ref();
+        let len = s.len();
+        let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
+        let layout = layout.extend(::core::alloc::Layout::new::<u8>()).unwrap().0;
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<u8>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                ::core::ptr::write(&mut ((*fat_ptr).age), a.0);
+                let tail_ptr = (&raw mut (*fat_ptr).name).cast::<u8>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+#[repr(C)]
+struct Credential {
+    ttl: u32,
+    key: [u16],
+}
+impl Credential {
+    ///Creates an instance of `Box<Credential>` from a slice.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build(ttl: u32, key: &[u16]) -> ::std::boxed::Box<Self>
+    where
+        u16: ::core::clone::Clone,
+    {
+        struct Guard<T> {
+            mem_ptr: *mut u8,
+            tail_ptr: *mut T,
+            initialized: usize,
+            layout: ::core::alloc::Layout,
+        }
+        impl<T> Drop for Guard<T> {
+            fn drop(&mut self) {
+                unsafe {
+                    let slice_ptr = ::core::ptr::slice_from_raw_parts_mut(
+                        self.tail_ptr,
+                        self.initialized,
+                    );
+                    ::core::ptr::drop_in_place(slice_ptr);
+                    ::std::alloc::dealloc(self.mem_ptr, self.layout);
+                }
+            }
+        }
+        let a = (ttl, key);
+        let len = a.1.len();
+        let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
+        let layout = layout.extend(::core::alloc::Layout::new::<u32>()).unwrap().0;
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<u16>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                ::core::ptr::write(&mut ((*fat_ptr).ttl), a.0);
+                let tail_ptr = (&raw mut (*fat_ptr).key).cast::<u16>();
+                let mut guard = Guard {
+                    mem_ptr,
+                    tail_ptr,
+                    layout,
+                    initialized: 0,
+                };
+                for idx in 0..len {
+                    let src_val_ref = a.1.get_unchecked(idx);
+                    #[allow(clippy::clone_on_copy)]
+                    let cloned_val = src_val_ref.clone();
+                    ::core::ptr::write(tail_ptr.add(idx), cloned_val);
+                    guard.initialized += 1;
+                }
+                ::std::mem::forget(guard);
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+    ///Creates an instance of `Box<Credential>` from an iterator.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build_from_iter<G>(ttl: u32, key: G) -> ::std::boxed::Box<Self>
+    where
+        G: ::core::iter::IntoIterator<Item = u16>,
+        <G as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator,
+    {
+        struct Guard<T> {
+            mem_ptr: *mut u8,
+            tail_ptr: *mut T,
+            initialized: usize,
+            layout: ::core::alloc::Layout,
+        }
+        impl<T> Drop for Guard<T> {
+            fn drop(&mut self) {
+                unsafe {
+                    let slice_ptr = ::core::ptr::slice_from_raw_parts_mut(
+                        self.tail_ptr,
+                        self.initialized,
+                    );
+                    ::core::ptr::drop_in_place(slice_ptr);
+                    ::std::alloc::dealloc(self.mem_ptr, self.layout);
+                }
+            }
+        }
+        let a = (ttl, key);
+        let iter = a.1.into_iter();
+        let len = iter.len();
+        let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
+        let layout = layout.extend(::core::alloc::Layout::new::<u32>()).unwrap().0;
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<u16>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                ::core::ptr::write(&mut ((*fat_ptr).ttl), a.0);
+                let tail_ptr = (&raw mut (*fat_ptr).key).cast::<u16>();
+                let mut guard = Guard {
+                    mem_ptr,
+                    tail_ptr,
+                    layout,
+                    initialized: 0,
+                };
+                for element in iter {
+                    if guard.initialized == len {
+                        {
+                            ::core::panicking::panic_fmt(
+                                format_args!(
+                                    "Mismatch between iterator-reported length and the number of items produced by the iterator",
+                                ),
+                            );
+                        };
+                    }
+                    ::core::ptr::write(tail_ptr.add(guard.initialized), element);
+                    guard.initialized += 1;
+                }
+                if guard.initialized != len {
+                    {
+                        ::core::panicking::panic_fmt(
+                            format_args!(
+                                "Mismatch between iterator-reported length and the number of items produced by the iterator",
+                            ),
+                        );
+                    };
+                }
+                ::std::mem::forget(guard);
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+trait MyTrait {
+    fn get_42(&self) -> u32;
+}
+struct MyStruct {}
+impl MyTrait for MyStruct {
+    fn get_42(&self) -> u32 {
+        42
+    }
+}
+#[repr(C)]
+struct Traity {
+    ttl: u32,
+    data: dyn MyTrait,
+}
+impl Traity {
+    ///Builds an instance of `Box<Traity>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build<G>(ttl: u32, data: G) -> ::std::boxed::Box<Self>
+    where
+        G: MyTrait + Sized,
+    {
+        let a = (ttl, data);
+        let s = a.1;
+        let trait_object: &dyn MyTrait = &s;
+        let (_, vtable): (*const G, *const ()) = unsafe {
+            ::core::mem::transmute(trait_object)
+        };
+        let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
+        let layout = layout.extend(::core::alloc::Layout::new::<u32>()).unwrap().0;
+        let layout = layout
+            .extend(::core::alloc::Layout::new::<G>())
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, *const ()),
+                    *mut Self,
+                >((mem_ptr, vtable));
+                ::core::ptr::write(&mut ((*fat_ptr).ttl), a.0);
+                let tail_ptr = (&raw mut (*fat_ptr).data).cast::<G>();
+                ::core::ptr::copy_nonoverlapping(&raw const s, tail_ptr, 1);
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+fn main() {
+    let user: Box<User> = User::new(33, "A string!");
+    {
+        ::std::io::_print(format_args!("User name: {0}\n", &user.name));
+    };
+    {
+        ::std::io::_print(format_args!("User age : {0}\n", user.age));
+    };
+    let cred: Box<Credential> = Credential::build(60, &[0, 1, 2, 3]);
+    {
+        ::std::io::_print(format_args!("TTL: {0}\n", &cred.ttl));
+    };
+    {
+        ::std::io::_print(format_args!("Key: {0:?}\n", &cred.key));
+    };
+    let my_struct = MyStruct {};
+    let traity: Box<Traity> = Traity::build(100, my_struct);
+    {
+        ::std::io::_print(format_args!("Traity TTL: {0}\n", &traity.ttl));
+    };
+    {
+        ::std::io::_print(format_args!("Traity data: {0}\n", traity.data.get_42()));
+    };
+}

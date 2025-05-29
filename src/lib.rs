@@ -174,12 +174,14 @@ mod macro_args;
 use macro_args::MacroArgs;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
-use std::collections::HashSet;
 use syn::token::Where;
-use syn::{
-    Field, Fields, Generics, Ident, Index, ItemStruct, TraitBoundModifier, Type, TypePath,
-    parse::Result as SynResult, punctuated::Punctuated, spanned::Spanned,
-};
+use syn::{Field, Fields, Generics, Ident, Index, ItemStruct, TraitBoundModifier, Type, TypePath, parse::Result as SynResult, punctuated::Punctuated, spanned::Spanned, TypeSlice, TypeTraitObject};
+
+enum TailKind {
+    Slice(TypeSlice),
+    Str,
+    TraitObject(TypeTraitObject),
+}
 
 struct StructInfo<'a> {
     struct_name_ident: &'a Ident,
@@ -188,6 +190,7 @@ struct StructInfo<'a> {
     header_field_idents: Box<[&'a Ident]>,
     tail_field: &'a Field,
     tail_field_ident: &'a Ident,
+    tail_kind: TailKind,
 }
 
 impl StructInfo<'_> {
@@ -204,6 +207,7 @@ impl StructInfo<'_> {
                 // Split fields into header fields (all but last) and the tail field (last)
                 let mut fields_iter = named_fields.named.iter();
                 let last_field = fields_iter.next_back().unwrap(); // Safe because we checked for emptiness above
+                let mut tail_kind = TailKind::Str;
 
                 // Verify the last field is a DST with unsized type [T], str, or dyn Trait
                 match &last_field.ty {
@@ -211,7 +215,8 @@ impl StructInfo<'_> {
                     Type::Path(TypePath { path, .. })
                         if path.segments.last().is_some_and(|s| s.ident == "str") => {}
 
-                    Type::TraitObject(_) | Type::Slice(_) => {}
+                    Type::TraitObject(trait_object) => tail_kind = TailKind::TraitObject(trait_object.clone()),
+                    Type::Slice(type_slice) => tail_kind = TailKind::Slice(type_slice.clone()),
 
                     _ => {
                         return Err(syn::Error::new_spanned(
@@ -241,6 +246,7 @@ impl StructInfo<'_> {
                     header_field_idents: header_field_idents.into_boxed_slice(),
                     tail_field,
                     tail_field_ident: tail_field.ident.as_ref().unwrap(),
+                    tail_kind,
                 })
             }
 
@@ -623,7 +629,7 @@ fn generate_factory_for_str_arg(
 fn generate_factory_for_trait_arg(
     macro_args: &MacroArgs,
     struct_info: &StructInfo,
-    type_trait_object: &syn::TypeTraitObject,
+    type_trait_object: &TypeTraitObject,
     args_tuple_ident: &Ident,
     header_layout_tokens: &TokenStream,
     tail_param_tuple_idx: &Index,
@@ -704,25 +710,12 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
     let header_layout_tokens = generate_header_layout_tokens(&struct_info.header_fields);
     let mut generated_factories = Vec::new();
 
-    // Collect incoming argument names from the signature to avoid collision for the tuple variable
-    let mut arg_names = struct_info
-        .header_field_idents
-        .iter()
-        .map(ToString::to_string)
-        .collect::<HashSet<String>>();
-    arg_names.insert(struct_info.tail_field_ident.to_string());
-
-    // Generate a unique name for the tuple (e.g., a, aa, aaa)
-    let mut tuple_name = "a".to_string();
-    while arg_names.contains(&tuple_name) {
-        tuple_name.push('a');
-    }
-    let args_tuple_ident = format_ident!("{}", tuple_name, span = Span::call_site());
+    let args_tuple_ident = format_ident!("args");
     let num_header_fields = struct_info.header_field_idents.len();
     let tail_param_tuple_idx = syn::Index::from(num_header_fields);
 
-    match &struct_info.tail_field.ty {
-        Type::Slice(type_slice) => {
+    match &struct_info.tail_kind {
+        TailKind::Slice(type_slice) => {
             generated_factories.push(generate_factory_for_slice_arg(
                 &macro_args,
                 &struct_info,
@@ -742,7 +735,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             ));
         }
 
-        Type::Path(type_path) if type_path.path.is_ident("str") => {
+        TailKind::Str => {
             generated_factories.push(generate_factory_for_str_arg(
                 &macro_args,
                 &struct_info,
@@ -752,19 +745,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
             ));
         }
 
-        Type::Path(TypePath { path, .. })
-            if path.segments.last().is_some_and(|s| s.ident == "str") =>
-        {
-            generated_factories.push(generate_factory_for_str_arg(
-                &macro_args,
-                &struct_info,
-                &header_layout_tokens,
-                &args_tuple_ident,
-                &tail_param_tuple_idx,
-            ));
-        }
-
-        Type::TraitObject(type_trait_object) => {
+        TailKind::TraitObject(type_trait_object) => {
             generated_factories.push(generate_factory_for_trait_arg(
                 &macro_args,
                 &struct_info,
@@ -773,10 +754,6 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
                 &header_layout_tokens,
                 &tail_param_tuple_idx,
             )?);
-        }
-
-        _ => {
-            unreachable!("Filtered out when creating the StructInfo")
         }
     }
 
