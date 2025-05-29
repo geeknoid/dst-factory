@@ -1,4 +1,4 @@
-error: Last field must be a dynamically sized type like [T] or str
+error: Last field must be a dynamically sized type like [T], str, or dyn Trait
  --> tests/ui/last_field_not_slice_or_str.rs:6:11
   |
 6 |     data: i32,

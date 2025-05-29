@@ -22,10 +22,9 @@ This saves memory by avoiding the need for a pointer and a separate allocation, 
 cycles by eliminating the need for indirection when accessing the data.
 
 Rust supports the notion of [Dynamically Sized Types](https://doc.rust-lang.org/reference/dynamically-sized-types.html), known as DSTs,
-which are types that have a size
-not known at compile time. DSTs are perfect to implement flexible array members. But
-unfortunately, Rust doesn't provide an out-of-the-box way to allocate instances of such types.
-This is where this crate comes in.
+which are types that have a size not known at compile time. DSTs are perfect to implement
+flexible array members. But unfortunately, Rust doesn't provide an out-of-the-box way to allocate
+instances of such types. This is where this crate comes in.
 
 You can apply the `#[make_dst_factory]` attribute to your DST struct which causes factory
 functions to be produced that let you easily and safely create instances of your DST.
@@ -80,15 +79,56 @@ let a = User::build(33, "Alice");
 // allocate another user with a 3-character string
 let b = User::build(33, "Bob");
 ```
+And finally, here's an example using a trait object as the last field of a struct:
+```rust
+use dst_factory::make_dst_factory;
+
+// a trait we'll use in our DST
+trait NumberProducer {
+   fn get_number(&self) -> u32;
+}
+
+// an implementation of the trait we're going to use
+struct FortyTwoProducer {}
+impl NumberProducer for FortyTwoProducer {
+   fn get_number(&self) -> u32 {
+       42
+   }
+}
+
+// another implementation of the trait we're going to use
+struct TenProducer {}
+impl NumberProducer for TenProducer {
+   fn get_number(&self) -> u32 {
+       10
+   }
+}
+
+#[make_dst_factory]
+struct Node {
+    count: u32,
+    producer: dyn NumberProducer,
+}
+
+// allocate an instance with one implementation of the trait
+let a = Node::build(33, FortyTwoProducer{});
+assert_eq!(42, a.producer.get_number());
+
+// allocate an instance with another implementation of the trait
+let b = Node::build(33, TenProducer{});
+assert_eq!(10, b.producer.get_number());
+```
+
 Because DSTs don't have a known size at compile time, you can't store them on the stack,
-and you can't pass them by value. As a result of these constraints, the `build` and
-`build_from_iter` functions always return boxed instances of the structs.
+and you can't pass them by value. As a result of these constraints, the factory functions
+always return boxed instances of the structs.
 
 ## Attribute Features
 
 The common use case for the `#[make_dst_factory]` attribute is to not pass any arguments.
-This results in factory functions called `build` when using a string as the last field of the
-struct, and `build` and `build_from_iter` when using an array as the last field of the struct.
+This results in factory functions called `build` when using a string or dynamic trait as the
+last field of the struct, and `build` and `build_from_iter` when using an array as the last
+field of the struct.
 
 The generated functions are private by default and have the following signatures:
 
@@ -98,13 +138,18 @@ fn build(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>
 where
     last_field_type: Clone;
 
-fn build_from_iter<I>(field1, field2, ..., last_field: I) -> Box<Self>
+fn build_from_iter<G>(field1, field2, ..., last_field: G) -> Box<Self>
 where
-    I: IntoIterator<Item = last_field_type>,
-    <I as IntoIterator>::IntoIter: ExactSizeIterator,
+    G: IntoIterator<Item = last_field_type>,
+    <G as IntoIterator>::IntoIter: ExactSizeIterator,
 
 // for strings
 fn build(field1, field2, ..., last_field: impl AsRef<str>) -> Box<Self>;
+
+// for traits
+fn build(field1, field2, ..., last_field: G) -> Box<Self>
+where
+    G: TraitName + Sized;
 ```
 
 The attribute lets you control the name of the generated functions, their
@@ -112,7 +157,7 @@ visibility, and whether to generate code for the `no_std` environment. The gener
 grammar is:
 
 ```ignore
-#[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std])]
+#[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std] [, generic=<generic_name>])]
 ```
 
 Some examples:
@@ -135,5 +180,5 @@ The `#[make_dst_factory]` attribute produces a compile-time error if:
 - It's applied to anything other than a struct with named fields.
 - Its arguments are malformed (e.g., incorrect visibility keyword, too many arguments).
 - The struct has no fields.
-- The last field of the struct is not a slice (`[T]`) or a string (`str`).
+- The last field of the struct is not a slice (`[T]`), a string (`str`), or a trait object (`dyn Trait`).
 - The resulting struct exceeds the maximum size allowed of `isize::MAX`.

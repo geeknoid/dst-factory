@@ -7,10 +7,9 @@
 //! cycles by eliminating the need for indirection when accessing the data.
 //!
 //! Rust supports the notion of [Dynamically Sized Types](https://doc.rust-lang.org/reference/dynamically-sized-types.html), known as DSTs,
-//! which are types that have a size
-//! not known at compile time. DSTs are perfect to implement flexible array members. But
-//! unfortunately, Rust doesn't provide an out-of-the-box way to allocate instances of such types.
-//! This is where this crate comes in.
+//! which are types that have a size not known at compile time. DSTs are perfect to implement
+//! flexible array members. But unfortunately, Rust doesn't provide an out-of-the-box way to allocate
+//! instances of such types. This is where this crate comes in.
 //!
 //! You can apply the #[[`macro@make_dst_factory`]] attribute to your DST struct which causes factory
 //! functions to be produced that let you easily and safely create instances of your DST.
@@ -65,15 +64,56 @@
 //! // allocate another user with a 3-character string
 //! let b = User::build(33, "Bob");
 //! ```
+//! And finally, here's an example using a trait object as the last field of a struct:
+//! ```rust
+//! use dst_factory::make_dst_factory;
+//!
+//! // a trait we'll use in our DST
+//! trait NumberProducer {
+//!    fn get_number(&self) -> u32;
+//! }
+//!
+//! // an implementation of the trait we're going to use
+//! struct FortyTwoProducer {}
+//! impl NumberProducer for FortyTwoProducer {
+//!    fn get_number(&self) -> u32 {
+//!        42
+//!    }
+//! }
+//!
+//! // another implementation of the trait we're going to use
+//! struct TenProducer {}
+//! impl NumberProducer for TenProducer {
+//!    fn get_number(&self) -> u32 {
+//!        10
+//!    }
+//! }
+//!
+//! #[make_dst_factory]
+//! struct Node {
+//!     count: u32,
+//!     producer: dyn NumberProducer,
+//! }
+//!
+//! // allocate an instance with one implementation of the trait
+//! let a = Node::build(33, FortyTwoProducer{});
+//! assert_eq!(42, a.producer.get_number());
+//!
+//! // allocate an instance with another implementation of the trait
+//! let b = Node::build(33, TenProducer{});
+//! assert_eq!(10, b.producer.get_number());
+//! ```
+//!
 //! Because DSTs don't have a known size at compile time, you can't store them on the stack,
-//! and you can't pass them by value. As a result of these constraints, the `build` and
-//! `build_from_iter` functions always return boxed instances of the structs.
+//! and you can't pass them by value. As a result of these constraints, the factory functions
+//! always return boxed instances of the structs.
 //!
 //! # Attribute Features
 //!
-//! The common use case for the #[[`macro@make_dst_factory`]] attribute is to not pass any arguments.
-//! This results in factory functions called `build` when using a string as the last field of the
-//! struct, and `build` and `build_from_iter` when using an array as the last field of the struct.
+//! The common use case for the `#[make_dst_factory]` attribute is to not pass any arguments.
+//! This results in factory functions called `build` when using a string or dynamic trait as the
+//! last field of the struct, and `build` and `build_from_iter` when using an array as the last
+//! field of the struct.
 //!
 //! The generated functions are private by default and have the following signatures:
 //!
@@ -83,13 +123,18 @@
 //! where
 //!     last_field_type: Clone;
 //!
-//! fn build_from_iter<I>(field1, field2, ..., last_field: I) -> Box<Self>
+//! fn build_from_iter<G>(field1, field2, ..., last_field: G) -> Box<Self>
 //! where
-//!     I: IntoIterator<Item = last_field_type>,
-//!     <I as IntoIterator>::IntoIter: ExactSizeIterator,
+//!     G: IntoIterator<Item = last_field_type>,
+//!     <G as IntoIterator>::IntoIter: ExactSizeIterator,
 //!
 //! // for strings
 //! fn build(field1, field2, ..., last_field: impl AsRef<str>) -> Box<Self>;
+//!
+//! // for traits
+//! fn build(field1, field2, ..., last_field: G) -> Box<Self>
+//! where
+//!     G: TraitName + Sized;
 //! ```
 //!
 //! The attribute lets you control the name of the generated functions, their
@@ -97,7 +142,7 @@
 //! grammar is:
 //!
 //! ```ignore
-//! #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std])]
+//! #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std] [, generic=<generic_name>])]
 //! ```
 //!
 //! Some examples:
@@ -120,7 +165,7 @@
 //! - It's applied to anything other than a struct with named fields.
 //! - Its arguments are malformed (e.g., incorrect visibility keyword, too many arguments).
 //! - The struct has no fields.
-//! - The last field of the struct is not a slice (`[T]`) or a string (`str`).
+//! - The last field of the struct is not a slice (`[T]`), a string (`str`), or a trait object (`dyn Trait`).
 //! - The resulting struct exceeds the maximum size allowed of `isize::MAX`.
 
 extern crate proc_macro;
@@ -132,7 +177,7 @@ use quote::{format_ident, quote, quote_spanned};
 use std::collections::HashSet;
 use syn::token::Where;
 use syn::{
-    Field, Fields, Generics, Ident, Index, ItemStruct, Type, TypePath, TypeSlice,
+    Field, Fields, Generics, Ident, Index, ItemStruct, TraitBoundModifier, Type, TypePath,
     parse::Result as SynResult, punctuated::Punctuated, spanned::Spanned,
 };
 
@@ -160,23 +205,21 @@ impl StructInfo<'_> {
                 let mut fields_iter = named_fields.named.iter();
                 let last_field = fields_iter.next_back().unwrap(); // Safe because we checked for emptiness above
 
-                // Verify the last field is a DST with unsized type [T] or str
+                // Verify the last field is a DST with unsized type [T], str, or dyn Trait
                 match &last_field.ty {
-                    Type::Slice(_) => true,
-                    Type::Path(type_path) if type_path.path.is_ident("str") => true,
+                    Type::Path(type_path) if type_path.path.is_ident("str") => {}
                     Type::Path(TypePath { path, .. })
-                        if path.segments.last().is_some_and(|s| s.ident == "str") =>
-                    {
-                        true
-                    }
+                        if path.segments.last().is_some_and(|s| s.ident == "str") => {}
+
+                    Type::TraitObject(_) | Type::Slice(_) => {}
 
                     _ => {
                         return Err(syn::Error::new_spanned(
                             &last_field.ty,
-                            "Last field must be a dynamically sized type like [T] or str",
+                            "Last field must be a dynamically sized type like [T], str, or dyn Trait",
                         ));
                     }
-                };
+                }
 
                 let mut header_fields = Vec::new();
                 let mut header_field_idents = Vec::new();
@@ -190,7 +233,6 @@ impl StructInfo<'_> {
                 }
 
                 let tail_field = named_fields.named.last().unwrap();
-                let tail_field_ident = tail_field.ident.as_ref().unwrap();
 
                 Ok(StructInfo {
                     struct_name_ident: &input_struct.ident,
@@ -198,7 +240,7 @@ impl StructInfo<'_> {
                     header_fields: header_fields.into_boxed_slice(),
                     header_field_idents: header_field_idents.into_boxed_slice(),
                     tail_field,
-                    tail_field_ident,
+                    tail_field_ident: tail_field.ident.as_ref().unwrap(),
                 })
             }
 
@@ -231,6 +273,33 @@ fn generate_tail_layout_tokens<T: quote::ToTokens>(tail_type: &T, span: Span) ->
     quote_spanned! { span => ::core::alloc::Layout::array::<#tail_type>(len).expect("Array exceeds maximum size allowed of isize::MAX") }
 }
 
+fn generate_guard_type(macro_args: &MacroArgs) -> TokenStream {
+    let dealloc_path = if macro_args.no_std {
+        quote! { ::alloc::alloc::dealloc }
+    } else {
+        quote! { ::std::alloc::dealloc }
+    };
+
+    quote! {
+        struct Guard<T> {
+            mem_ptr: *mut u8,
+            tail_ptr: *mut T,
+            initialized: usize,
+            layout: ::core::alloc::Layout,
+        }
+
+        impl<T> Drop for Guard<T> {
+            fn drop(&mut self) {
+                unsafe {
+                    let slice_ptr = ::core::ptr::slice_from_raw_parts_mut(self.tail_ptr, self.initialized);
+                    ::core::ptr::drop_in_place(slice_ptr);
+                    #dealloc_path(self.mem_ptr, self.layout);
+                }
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn generate_factory_common(
     macro_args: &MacroArgs,
@@ -246,6 +315,7 @@ fn generate_factory_common(
     tail_layout_tokens: &TokenStream,
     tail_processing_tokens: &TokenStream,
     tail_write_tokens: &TokenStream,
+    fat_ptr_tokens: &TokenStream,
 ) -> TokenStream {
     let MacroArgs {
         visibility: factory_visibility,
@@ -325,7 +395,7 @@ fn generate_factory_common(
                 if layout.size() == 0 {
                     // Handle ZST case
                     let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
-                    let fat_ptr = ::core::mem::transmute::<(*mut (), usize), *mut Self>((mem_ptr, len));
+                    let fat_ptr = ::core::mem::transmute::<(*mut (), usize), *mut Self>((mem_ptr, 0));
                     #box_path::from_raw(fat_ptr)
                 } else {
                     let mem_ptr = #alloc_path(layout);
@@ -333,7 +403,7 @@ fn generate_factory_common(
                         #handle_alloc_error
                     }
 
-                    let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
+                    #fat_ptr_tokens
 
                     #( #header_field_writes )*
 
@@ -347,23 +417,20 @@ fn generate_factory_common(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn generate_factory_for_slice_arg(
     macro_args: &MacroArgs,
     struct_info: &StructInfo,
     header_layout_tokens: &TokenStream,
     args_tuple_ident: &Ident,
-    base_factory_name: &Ident,
-    tail_field_ident: &Ident,
     tail_param_tuple_idx: &Index,
     tail_type: &Type,
-    guard_type_tokens: Option<&TokenStream>,
 ) -> TokenStream {
     let struct_name_ident = &struct_info.struct_name_ident;
-    let factory_name_ident = base_factory_name;
+    let factory_name_ident = &macro_args.base_factory_name;
     let factory_doc_string =
         format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.");
 
+    let tail_field_ident = &struct_info.tail_field_ident;
     let tail_param_tokens = quote! { #tail_field_ident: &[#tail_type] };
 
     let clone_predicate_tokens: syn::WherePredicate = syn::parse_quote_spanned! {tail_type.span()=>
@@ -395,13 +462,17 @@ fn generate_factory_for_slice_arg(
         let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
         let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
         for idx in 0..len {
-            let src_val_ref = #args_tuple_ident.#tail_param_tuple_idx.get(idx).unwrap();
+            let src_val_ref = #args_tuple_ident.#tail_param_tuple_idx.get_unchecked(idx);
             #[allow(clippy::clone_on_copy)]
             let cloned_val = src_val_ref.clone();
             ::core::ptr::write(tail_ptr.add(idx), cloned_val);
             guard.initialized += 1;
         }
         ::std::mem::forget(guard);
+    };
+
+    let fat_ptr_tokens = quote! {
+        let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
     };
 
     generate_factory_common(
@@ -411,39 +482,38 @@ fn generate_factory_for_slice_arg(
         &factory_doc_string,
         None, // factory_generics_tokens
         factory_where_clause_tokens.as_ref(),
-        guard_type_tokens,
+        Some(&generate_guard_type(macro_args)),
         args_tuple_ident,
         header_layout_tokens,
         &tail_param_tokens,
         &tail_layout_tokens,
         &tail_processing_tokens,
         &tail_write_tokens,
+        &fat_ptr_tokens,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn generate_factory_for_iter_arg(
     macro_args: &MacroArgs,
     struct_info: &StructInfo,
     header_layout_tokens: &TokenStream,
     args_tuple_ident: &Ident,
-    base_factory_name: &Ident,
-    tail_field_ident: &Ident,
     tail_param_tuple_idx: &Index,
     tail_type: &Type,
-    guard_type_tokens: Option<&TokenStream>,
 ) -> TokenStream {
     let struct_name_ident = &struct_info.struct_name_ident;
-    let factory_name_ident = format_ident!("{}_from_iter", base_factory_name);
+    let factory_name_ident = format_ident!("{}_from_iter", &macro_args.base_factory_name);
     let factory_doc_string =
         format!("Creates an instance of `Box<{struct_name_ident}>` from an iterator.");
 
-    let iter_generic_param_ident = format_ident!("I");
+    let iter_generic_param_ident = &macro_args.generic_name;
+    let tail_field_ident = &struct_info.tail_field_ident;
     let tail_param_tokens = quote! { #tail_field_ident: #iter_generic_param_ident };
     let factory_generics_tokens = Some(quote! { <#iter_generic_param_ident> });
     let factory_where_clause_tokens = Some(quote! {
-        where #iter_generic_param_ident: ::core::iter::IntoIterator<Item = #tail_type>,
-              <#iter_generic_param_ident as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator
+        where
+            #iter_generic_param_ident: ::core::iter::IntoIterator<Item = #tail_type>,
+            <#iter_generic_param_ident as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator
     });
 
     let tail_processing_tokens = quote! {
@@ -458,11 +528,24 @@ fn generate_factory_for_iter_arg(
         // Write each element from the iterator into the tail field
         let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
         let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
-        for (i, element) in iter.enumerate() {
-            ::core::ptr::write(tail_ptr.add(i), element);
+        for element in iter {
+            if guard.initialized == len {
+                panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
+            }
+
+            ::core::ptr::write(tail_ptr.add(guard.initialized), element);
             guard.initialized += 1;
         }
+
+        if guard.initialized != len {
+            panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
+        }
+
         ::std::mem::forget(guard);
+    };
+
+    let fat_ptr_tokens = quote! {
+        let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
     };
 
     generate_factory_common(
@@ -472,31 +555,30 @@ fn generate_factory_for_iter_arg(
         &factory_doc_string,
         factory_generics_tokens.as_ref(),
         factory_where_clause_tokens.as_ref(),
-        guard_type_tokens,
+        Some(&generate_guard_type(macro_args)),
         args_tuple_ident,
         header_layout_tokens,
         &tail_param_tokens,
         &tail_layout_tokens,
         &tail_processing_tokens,
         &tail_write_tokens,
+        &fat_ptr_tokens,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn generate_factory_for_str_arg(
     macro_args: &MacroArgs,
     struct_info: &StructInfo,
     header_layout_tokens: &TokenStream,
     args_tuple_ident: &Ident,
-    base_factory_name: &Ident,
-    tail_field_ident: &Ident,
     tail_param_tuple_idx: &Index,
 ) -> TokenStream {
     let struct_name_ident = &struct_info.struct_name_ident;
-    let factory_name_ident = base_factory_name;
+    let factory_name_ident = &macro_args.base_factory_name;
     let factory_doc_string =
         format!("Creates an instance of `Box<{struct_name_ident}>` from a string slice.");
 
+    let tail_field_ident = &struct_info.tail_field_ident;
     let tail_param_tokens = quote! { #tail_field_ident: impl ::core::convert::AsRef<str> };
 
     let tail_type = &struct_info.tail_field.ty;
@@ -516,6 +598,10 @@ fn generate_factory_for_str_arg(
         ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
     };
 
+    let fat_ptr_tokens = quote! {
+        let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
+    };
+
     generate_factory_common(
         macro_args,
         struct_info,
@@ -530,7 +616,83 @@ fn generate_factory_for_str_arg(
         &tail_layout_tokens, // factory_where_clause_tokens
         &tail_processing_tokens,
         &tail_write_tokens,
+        &fat_ptr_tokens,
     )
+}
+
+fn generate_factory_for_trait_arg(
+    macro_args: &MacroArgs,
+    struct_info: &StructInfo,
+    type_trait_object: &syn::TypeTraitObject,
+    args_tuple_ident: &Ident,
+    header_layout_tokens: &TokenStream,
+    tail_param_tuple_idx: &Index,
+) -> SynResult<TokenStream> {
+    let mut main_trait_path: Option<&syn::Path> = None;
+    for bound in &type_trait_object.bounds {
+        if let syn::TypeParamBound::Trait(trait_bound) = bound {
+            if trait_bound.paren_token.is_none()
+                && matches!(trait_bound.modifier, TraitBoundModifier::None)
+            {
+                // Use the first simple trait bound found
+                main_trait_path = Some(&trait_bound.path);
+                break;
+            }
+        }
+    }
+
+    let Some(trait_path) = main_trait_path else {
+        return Err(syn::Error::new_spanned(
+            type_trait_object,
+            "Could not determine the main trait for the dyn Trait field. Only simple trait bounds like 'dyn MyTrait' are supported. Ensure the trait is not a higher-rank trait bound (e.g. for<...>) directly in this position.",
+        ));
+    };
+
+    let factory_name_ident = &macro_args.base_factory_name;
+    let factory_doc_string = format!(
+        "Builds an instance of `Box<{}>`.",
+        struct_info.struct_name_ident,
+    );
+
+    let trait_generic = &macro_args.generic_name;
+    let factory_generics_tokens = Some(quote! { <#trait_generic> });
+    let factory_where_clause_tokens = Some(quote! { where #trait_generic: #trait_path + Sized });
+    let tail_field_ident = &struct_info.tail_field_ident;
+    let tail_param_tokens = quote! { #tail_field_ident: #trait_generic };
+    let tail_layout_tokens = quote! { ::core::alloc::Layout::new::<#trait_generic>() };
+
+    let tail_processing_tokens = quote! {
+        let s = #args_tuple_ident.#tail_param_tuple_idx;
+        let trait_object: &dyn #trait_path = &s;
+        let (_, vtable): (*const #trait_generic, *const ()) = unsafe { ::core::mem::transmute(trait_object) };
+    };
+
+    let tail_write_tokens = quote! {
+        // copy the instance data into the tail field
+        let tail_ptr = (&raw mut (*fat_ptr).#tail_field_ident).cast::<#trait_generic>();
+        ::core::ptr::copy_nonoverlapping(::core::ptr::addr_of!(s), tail_ptr, 1);
+    };
+
+    let fat_ptr_tokens = quote! {
+        let fat_ptr = ::core::mem::transmute::<(*mut u8, *const ()), *mut Self>((mem_ptr, vtable));
+    };
+
+    Ok(generate_factory_common(
+        macro_args,
+        struct_info,
+        factory_name_ident, // This is the Ident for the factory function name
+        &factory_doc_string,
+        factory_generics_tokens.as_ref(),
+        factory_where_clause_tokens.as_ref(),
+        None, // guard_type_tokens
+        args_tuple_ident,
+        header_layout_tokens,
+        &tail_param_tokens,
+        &tail_layout_tokens,
+        &tail_processing_tokens,
+        &tail_write_tokens,
+        &fat_ptr_tokens,
+    ))
 }
 
 fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult<TokenStream> {
@@ -556,78 +718,69 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
         tuple_name.push('a');
     }
     let args_tuple_ident = format_ident!("{}", tuple_name, span = Span::call_site());
-    let base_factory_name = &macro_args.base_factory_name;
-    let tail_field_ident = struct_info.tail_field_ident;
     let num_header_fields = struct_info.header_field_idents.len();
     let tail_param_tuple_idx = syn::Index::from(num_header_fields);
 
-    if let Type::Slice(TypeSlice {
-        elem: tail_type, ..
-    }) = &struct_info.tail_field.ty
-    {
-        let dealloc_path = if macro_args.no_std {
-            quote! { ::alloc::alloc::dealloc }
-        } else {
-            quote! { ::std::alloc::dealloc }
-        };
+    match &struct_info.tail_field.ty {
+        Type::Slice(type_slice) => {
+            generated_factories.push(generate_factory_for_slice_arg(
+                &macro_args,
+                &struct_info,
+                &header_layout_tokens,
+                &args_tuple_ident,
+                &tail_param_tuple_idx,
+                &type_slice.elem,
+            ));
 
-        let guard_type_tokens = Some(quote! {
-            struct Guard<T> {
-                mem_ptr: *mut u8,
-                tail_ptr: *mut T,
-                initialized: usize,
-                layout: ::core::alloc::Layout,
-            }
+            generated_factories.push(generate_factory_for_iter_arg(
+                &macro_args,
+                &struct_info,
+                &header_layout_tokens,
+                &args_tuple_ident,
+                &tail_param_tuple_idx,
+                &type_slice.elem,
+            ));
+        }
 
-            impl<T> Drop for Guard<T> {
-                fn drop(&mut self) {
-                    unsafe {
-                        for i in 0..self.initialized {
-                            ::core::ptr::drop_in_place(self.tail_ptr.add(i));
-                        }
+        Type::Path(type_path) if type_path.path.is_ident("str") => {
+            generated_factories.push(generate_factory_for_str_arg(
+                &macro_args,
+                &struct_info,
+                &header_layout_tokens,
+                &args_tuple_ident,
+                &tail_param_tuple_idx,
+            ));
+        }
 
-                        #dealloc_path(self.mem_ptr, self.layout);
-                    }
-                }
-            }
-        });
+        Type::Path(TypePath { path, .. })
+            if path.segments.last().is_some_and(|s| s.ident == "str") =>
+        {
+            generated_factories.push(generate_factory_for_str_arg(
+                &macro_args,
+                &struct_info,
+                &header_layout_tokens,
+                &args_tuple_ident,
+                &tail_param_tuple_idx,
+            ));
+        }
 
-        generated_factories.push(generate_factory_for_slice_arg(
-            &macro_args,
-            &struct_info,
-            &header_layout_tokens,
-            &args_tuple_ident,
-            base_factory_name,
-            tail_field_ident,
-            &tail_param_tuple_idx,
-            tail_type,
-            guard_type_tokens.as_ref(),
-        ));
+        Type::TraitObject(type_trait_object) => {
+            generated_factories.push(generate_factory_for_trait_arg(
+                &macro_args,
+                &struct_info,
+                type_trait_object,
+                &args_tuple_ident,
+                &header_layout_tokens,
+                &tail_param_tuple_idx,
+            )?);
+        }
 
-        generated_factories.push(generate_factory_for_iter_arg(
-            &macro_args,
-            &struct_info,
-            &header_layout_tokens,
-            &args_tuple_ident,
-            base_factory_name,
-            tail_field_ident,
-            &tail_param_tuple_idx,
-            tail_type,
-            guard_type_tokens.as_ref(),
-        ));
-    } else {
-        generated_factories.push(generate_factory_for_str_arg(
-            &macro_args,
-            &struct_info,
-            &header_layout_tokens,
-            &args_tuple_ident,
-            base_factory_name,
-            tail_field_ident,
-            &tail_param_tuple_idx,
-        ));
+        _ => {
+            unreachable!("Filtered out when creating the StructInfo")
+        }
     }
 
-    let struct_name_ident = &struct_info.struct_name_ident;
+    let struct_name_ident = struct_info.struct_name_ident;
     Ok(quote! {
         #[repr(C)]
         #input_struct
@@ -640,7 +793,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 
 /// Generate factory functions for dynamically sized types (DST) structs.
 ///
-/// This macro, when applied to a struct whose last field is a slice (`[T]`) or `str`,
+/// This macro, when applied to a struct whose last field is a slice (`[T]`), `str`, or `dyn Trait`,
 /// generates an `impl` block with functions to construct instances of the structs with
 /// dynamically sized tail data.
 ///
@@ -648,7 +801,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 /// uses can pass arguments with the following grammar:
 ///
 /// ```ignore
-/// #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std])]
+/// #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std] [, generic=<generic_name>])]
 /// ```
 /// Refer to the [crate-level documentation](crate) for more details and example uses.
 ///
@@ -668,6 +821,15 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 /// struct PublicStruct {
 ///     id: u32,
 ///     data: str,
+/// }
+///
+/// trait MyTrait {};
+///
+/// // With a trait object as the tail field
+/// #[make_dst_factory]
+/// struct TraitStruct {
+///     id: u32,
+///     handler: dyn MyTrait,
 /// }
 /// ```
 #[proc_macro_attribute]

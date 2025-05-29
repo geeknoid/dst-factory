@@ -3,7 +3,6 @@
 use dst_factory::make_dst_factory;
 use std::fmt::Debug;
 
-// Test 1: Basic functionality with str field
 #[make_dst_factory(basic_str_builder)]
 struct BasicStrStruct {
     id: usize,
@@ -22,7 +21,24 @@ fn test_basic_str_usage() {
     }
 }
 
-// Test 2: Basic functionality with slice field and generics
+#[make_dst_factory]
+struct LongFormStrStruct {
+    id: usize,
+    text_data: std::primitive::str,
+}
+
+#[test]
+fn test_long_form_str_usage() {
+    for i in 0..64 {
+        let s = ".".repeat(i);
+
+        let instance: Box<LongFormStrStruct> = LongFormStrStruct::build(i, s.as_str());
+
+        assert_eq!(instance.id, i);
+        assert_eq!(&instance.text_data, s.as_str());
+    }
+}
+
 #[make_dst_factory(basic_slice_builder)]
 struct BasicSliceStruct<T> {
     id: usize,
@@ -42,7 +58,6 @@ fn test_basic_slice_usage() {
     }
 }
 
-// Test 3: Custom public builder name
 #[make_dst_factory(create_publicly, pub)]
 struct PublicBuilderStruct {
     code: std::primitive::u16,
@@ -56,7 +71,6 @@ fn test_public_builder() {
     assert_eq!(&instance.message, "Not Found");
 }
 
-// Test 4: Custom crate-visible builder name
 #[make_dst_factory(create_for_crate, pub(crate))]
 struct CrateBuilderStruct {
     level: u8,
@@ -70,7 +84,6 @@ fn test_crate_builder() {
     assert_eq!(&instance.description, "Admin Level");
 }
 
-// Test 5: Default builder name (`build`)
 #[make_dst_factory]
 struct DefaultBuilderNameStruct {
     value: i64,
@@ -85,7 +98,6 @@ fn test_default_builder_name() {
     assert_eq!(&instance.name_tag, "default_tag");
 }
 
-// Test 6: Struct with only a str DST field
 #[make_dst_factory(build_only_str)]
 struct OnlyStrField {
     content: str,
@@ -97,7 +109,6 @@ fn test_only_str_dst_field() {
     assert_eq!(&instance.content, "This is the only content.");
 }
 
-// Test 7: Struct with only a slice DST field
 #[make_dst_factory(build_only_slice)]
 struct OnlySliceField<T: Clone> {
     items_data: [T],
@@ -110,7 +121,6 @@ fn test_only_slice_dst_field() {
     assert_eq!(&instance.items_data, char_data);
 }
 
-// Test 8: Struct with generics and lifetimes for sized fields, and a str DST
 #[make_dst_factory(build_generic_lifetime_str)]
 struct GenericLifetimeStrStruct<'a, K: Default> {
     key_ref: &'a K,
@@ -134,7 +144,6 @@ fn test_generic_lifetime_str_dst() {
     assert_eq!(&instance2.payload, "another payload");
 }
 
-// Test 9: Struct with generics and lifetimes for sized fields, and a str DST
 const SOME_CONST: usize = 2;
 
 #[make_dst_factory]
@@ -153,7 +162,6 @@ fn test_generic_const_dst() {
     assert_eq!(&instance.payload, "dynamic payload part");
 }
 
-// Test 10: Struct with complex field types before DST
 #[make_dst_factory(build_complex_fields)]
 struct ComplexFieldsStruct<T>
 where
@@ -181,7 +189,6 @@ fn test_complex_fields_before_dst() {
     assert_eq!(&instance.raw_log, "Log entry data here"); // This test fails due to a bug in the macro
 }
 
-// Test 11: Struct with a where clause
 #[make_dst_factory(build_from_iter_where_clause)]
 struct WhereClauseStruct<T>
 where
@@ -200,7 +207,6 @@ fn test_struct_from_iter_where_clause() {
     assert_eq!(&instance.variable_items, u8_items);
 }
 
-// Test 13 (was 12): Interaction with other derive macros
 #[derive(Debug)]
 #[make_dst_factory(build_derived)]
 struct DerivedExampleStruct {
@@ -217,7 +223,6 @@ fn test_interaction_from_iter_derives() {
     assert!(!format!("{instance:?}").is_empty());
 }
 
-// Test 14: Empty DST slice
 #[test]
 fn test_empty_dst_slice_data() {
     let empty_u16_data: &[u16] = &[];
@@ -228,7 +233,6 @@ fn test_empty_dst_slice_data() {
     assert_eq!(&instance.elements, empty_u16_data);
 }
 
-// Test 15: Empty DST str
 #[test]
 fn test_empty_dst_str_data() {
     let instance: Box<BasicStrStruct> = BasicStrStruct::basic_str_builder(0, "");
@@ -237,7 +241,6 @@ fn test_empty_dst_str_data() {
     assert_eq!(&instance.text_data, "");
 }
 
-// Test 16: Slice of Zero-Sized Types (ZSTs)
 #[make_dst_factory(build_zst_slice)]
 struct ZstSliceStruct {
     a: u64,
@@ -250,6 +253,97 @@ fn test_zst_slice_dst() {
     let instance: Box<ZstSliceStruct> = ZstSliceStruct::build_zst_slice(0xAB_CDEF, zst_data_slice);
     assert_eq!(instance.a, 0xAB_CDEF);
     assert_eq!(instance.unit_slice.len(), 4);
+}
+
+// Iterator that incorrectly reports its length via ExactSizeIterator
+struct FaultyIter {
+    items_to_yield: usize,
+    len_to_return: usize,
+}
+
+impl Iterator for FaultyIter {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.items_to_yield > 0 {
+            self.items_to_yield -= 1;
+            Some(42)
+        } else {
+            None
+        }
+    }
+}
+
+impl ExactSizeIterator for FaultyIter {
+    fn len(&self) -> usize {
+        self.len_to_return
+    }
+}
+
+#[test]
+#[should_panic(
+    expected = "Mismatch between iterator-reported length and the number of items produced by the iterator"
+)]
+fn test_build_from_iter_with_too_many_items() {
+    let iterator_with_wrong_len = FaultyIter {
+        items_to_yield: 20,
+        len_to_return: 10,
+    };
+
+    // This call is expected to panic because the iterator's `len()` is misleading.
+    let _ = BasicSliceStruct::<u8>::basic_slice_builder_from_iter(42, iterator_with_wrong_len);
+}
+
+#[test]
+#[should_panic(
+    expected = "Mismatch between iterator-reported length and the number of items produced by the iterator"
+)]
+fn test_build_from_iter_with_too_few_items() {
+    let iterator_with_wrong_len = FaultyIter {
+        items_to_yield: 10,
+        len_to_return: 20,
+    };
+
+    // This call is expected to panic because the iterator's `len()` is misleading.
+    let _ = BasicSliceStruct::<u8>::basic_slice_builder_from_iter(42, iterator_with_wrong_len);
+}
+
+// a trait we'll use in our DST
+trait NumberProducer {
+    fn get_number(&self) -> u32;
+}
+
+// an implementation of the trait we're going to use
+struct FortyTwoProducer {}
+impl NumberProducer for FortyTwoProducer {
+    fn get_number(&self) -> u32 {
+        42
+    }
+}
+
+// another implementation of the trait we're going to use
+struct TenProducer {}
+impl NumberProducer for TenProducer {
+    fn get_number(&self) -> u32 {
+        10
+    }
+}
+
+#[make_dst_factory]
+struct Node {
+    count: u32,
+    producer: dyn NumberProducer,
+}
+
+#[test]
+fn test_dst_with_trait_object() {
+    // allocate an instance with one implementation of the trait
+    let a = Node::build(33, FortyTwoProducer {});
+    assert_eq!(42, a.producer.get_number());
+
+    // allocate an instance with another implementation of the trait
+    let b = Node::build(33, TenProducer {});
+    assert_eq!(10, b.producer.get_number());
 }
 
 #[test]
@@ -273,6 +367,7 @@ fn test_error_paths() {
     t.compile_fail("tests/ui/bad_visibility.rs");
     t.compile_fail("tests/ui/no_comma_after_visibility.rs");
     t.compile_fail("tests/ui/need_no_std.rs");
+    t.compile_fail("tests/ui/bad_str.rs");
 
     // this gives a different error in CI then locally (Windows vs. Linux difference?)
     // t.compile_fail("tests/ui/multiple_dst_fields.rs");
