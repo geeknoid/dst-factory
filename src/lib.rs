@@ -156,6 +156,10 @@
 //!
 //! // The factory functions will be private, called `create` and `create_from_iter`, and support the `no_std` environment
 //! #[make_dst_factory(create, no_std)]
+//!
+//! // The factory functions will be private, called `create` and `create_from_iter`,
+//! // support the `no_std` environment, and will have generic types called `X`.
+//! #[make_dst_factory(create, no_std, generic=X)]
 //! ```
 //!
 //! # Error Conditions

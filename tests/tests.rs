@@ -39,7 +39,7 @@ fn test_long_form_str_usage() {
     }
 }
 
-#[make_dst_factory(basic_slice_builder)]
+#[make_dst_factory(basic_slice_builder, generic = M)]
 struct BasicSliceStruct<T> {
     id: usize,
     elements: [T],
