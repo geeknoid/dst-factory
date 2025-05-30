@@ -36,16 +36,15 @@
 //!     signing_key: [u8],
 //! }
 //!
-//! // allocate one user with a 4 byte key
-//! let a = User::build(33, &[0, 1, 2, 3]);
+//! // allocate one user with a 4-byte key
+//! let a = User::build(33, [0, 1, 2, 3]);
 //!
-//! // allocate another user with a 5 byte key
-//! let b = User::build(33, &[0, 1, 2, 3, 4]);
+//! // allocate another user with a 5-byte key
+//! let b = User::build_from_slice(33, &[0, 1, 2, 3, 4]);
 //!
 //! // allocate another user, this time using an iterator
-//! let v = vec![0u8, 1, 2, 3, 4];
-//! let iter = v.into_iter();
-//! let c = User::build_from_iter(33, iter);
+//! let v = vec![0, 1, 2, 3, 4];
+//! let c = User::build(33, v);
 //! ```
 //! Here's another example, this time using a string as the last field of a struct:
 //!
@@ -112,21 +111,21 @@
 //!
 //! The common use case for the `#[make_dst_factory]` attribute is to not pass any arguments.
 //! This results in factory functions called `build` when using a string or dynamic trait as the
-//! last field of the struct, and `build` and `build_from_iter` when using an array as the last
+//! last field of the struct, and `build` and `build` when using an array as the last
 //! field of the struct.
 //!
 //! The generated functions are private by default and have the following signatures:
 //!
 //! ```ignore
-//! // for arrays
-//! fn build(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>
-//! where
-//!     last_field_type: Clone;
-//!
-//! fn build_from_iter<G>(field1, field2, ..., last_field: G) -> Box<Self>
+//! fn build<G>(field1, field2, ..., last_field: G) -> Box<Self>
 //! where
 //!     G: IntoIterator<Item = last_field_type>,
 //!     <G as IntoIterator>::IntoIter: ExactSizeIterator,
+//!
+//! // for arrays
+//! fn build_from_slice(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>
+//! where
+//!     last_field_type: Copy + Sized;
 //!
 //! // for strings
 //! fn build(field1, field2, ..., last_field: impl AsRef<str>) -> Box<Self>;
@@ -148,16 +147,16 @@
 //! Some examples:
 //!
 //! ```ignore
-//! // The factory functions will be private and called `create` and `create_from_iter`
+//! // The factory functions will be private and called `create` and `create_from_slice`
 //! #[make_dst_factory(create)]
 //!
-//! // The factory functions will be public and called `create` and `create_from_iter`
+//! // The factory functions will be public and called `create` and `create_from_slice`
 //! #[make_dst_factory(create, pub)]
 //!
-//! // The factory functions will be private, called `create` and `create_from_iter`, and support the `no_std` environment
+//! // The factory functions will be private, called `create` and `create_from_slice`, and support the `no_std` environment
 //! #[make_dst_factory(create, no_std)]
 //!
-//! // The factory functions will be private, called `create` and `create_from_iter`,
+//! // The factory functions will be private, called `create` and `create_from_slice`,
 //! // support the `no_std` environment, and will have generic types called `X`.
 //! #[make_dst_factory(create, no_std, generic=X)]
 //! ```
@@ -441,15 +440,15 @@ fn generate_factory_for_slice_arg(
     tail_type: &Type,
 ) -> TokenStream {
     let struct_name_ident = &struct_info.struct_name_ident;
-    let factory_name_ident = &macro_args.base_factory_name;
+    let factory_name_ident = format_ident!("{}_from_slice", &macro_args.base_factory_name);
     let factory_doc_string =
         format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.");
 
     let tail_field_ident = &struct_info.tail_field_ident;
     let tail_param_tokens = quote! { #tail_field_ident: &[#tail_type] };
 
-    let clone_predicate_tokens: syn::WherePredicate = syn::parse_quote_spanned! {tail_type.span()=>
-        #tail_type: ::core::clone::Clone
+    let copy_bound_tokens: syn::WherePredicate = syn::parse_quote_spanned! {tail_type.span()=>
+        #tail_type: ::core::marker::Copy
     };
 
     let mut final_where_clause = struct_info
@@ -461,29 +460,22 @@ fn generate_factory_for_slice_arg(
             predicates: Punctuated::new(),
         });
 
-    final_where_clause.predicates.push(clone_predicate_tokens);
+    final_where_clause.predicates.push(copy_bound_tokens);
 
     let factory_where_clause_tokens = Some(quote! { #final_where_clause });
 
     let tail_processing_tokens = quote! {
-        let len = #args_tuple_ident.#tail_param_tuple_idx.len();
+        let s = #args_tuple_ident.#tail_param_tuple_idx.as_ref();
+        let len = s.len();
     };
 
     let tail_layout_tokens =
         generate_tail_layout_tokens(tail_type, struct_info.tail_field.ty.span());
 
     let tail_write_tokens = quote_spanned! {tail_type.span()=>
-        // Clone the slice content into the tail field
-        let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
-        let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
-        for idx in 0..len {
-            let src_val_ref = #args_tuple_ident.#tail_param_tuple_idx.get_unchecked(idx);
-            #[allow(clippy::clone_on_copy)]
-            let cloned_val = src_val_ref.clone();
-            ::core::ptr::write(tail_ptr.add(idx), cloned_val);
-            guard.initialized += 1;
-        }
-        ::std::mem::forget(guard);
+        // Copy the slice content into the tail field
+        let tail_ptr = (&raw mut (*fat_ptr).#tail_field_ident).cast::<#tail_type>();
+        ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
     };
 
     let fat_ptr_tokens = quote! {
@@ -493,11 +485,11 @@ fn generate_factory_for_slice_arg(
     generate_factory_common(
         macro_args,
         struct_info,
-        factory_name_ident,
+        &factory_name_ident,
         &factory_doc_string,
         None, // factory_generics_tokens
         factory_where_clause_tokens.as_ref(),
-        Some(&generate_guard_type(macro_args)),
+        None,
         args_tuple_ident,
         header_layout_tokens,
         &tail_param_tokens,
@@ -517,7 +509,7 @@ fn generate_factory_for_iter_arg(
     tail_type: &Type,
 ) -> TokenStream {
     let struct_name_ident = &struct_info.struct_name_ident;
-    let factory_name_ident = format_ident!("{}_from_iter", &macro_args.base_factory_name);
+    let factory_name_ident = &macro_args.base_factory_name;
     let factory_doc_string =
         format!("Creates an instance of `Box<{struct_name_ident}>` from an iterator.");
 
@@ -566,7 +558,7 @@ fn generate_factory_for_iter_arg(
     generate_factory_common(
         macro_args,
         struct_info,
-        &factory_name_ident,
+        factory_name_ident,
         &factory_doc_string,
         factory_generics_tokens.as_ref(),
         factory_where_clause_tokens.as_ref(),

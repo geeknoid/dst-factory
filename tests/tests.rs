@@ -51,7 +51,7 @@ fn test_basic_slice_usage() {
         let v = vec!['*'; i];
 
         let instance: Box<BasicSliceStruct<char>> =
-            BasicSliceStruct::basic_slice_builder(i, v.as_slice());
+            BasicSliceStruct::basic_slice_builder_from_slice(i, v.as_slice());
 
         assert_eq!(instance.id, i);
         assert_eq!(&instance.elements, v.as_slice());
@@ -117,7 +117,8 @@ struct OnlySliceField<T: Clone> {
 #[test]
 fn test_only_slice_dst_field() {
     let char_data: &[char] = &['x', 'y', 'z'];
-    let instance: Box<OnlySliceField<char>> = OnlySliceField::build_only_slice(char_data);
+    let instance: Box<OnlySliceField<char>> =
+        OnlySliceField::build_only_slice_from_slice(char_data);
     assert_eq!(&instance.items_data, char_data);
 }
 
@@ -189,7 +190,7 @@ fn test_complex_fields_before_dst() {
     assert_eq!(&instance.raw_log, "Log entry data here"); // This test fails due to a bug in the macro
 }
 
-#[make_dst_factory(build_from_iter_where_clause)]
+#[make_dst_factory(build_where_clause)]
 struct WhereClauseStruct<T>
 where
     T: Copy + Default + PartialEq + std::fmt::Debug,
@@ -202,7 +203,7 @@ where
 fn test_struct_from_iter_where_clause() {
     let u8_items: &[u8] = &[11, 22, 33];
     let instance: Box<WhereClauseStruct<u8>> =
-        WhereClauseStruct::build_from_iter_where_clause(5u8, u8_items);
+        WhereClauseStruct::build_where_clause_from_slice(5u8, u8_items);
     assert_eq!(instance.fixed_item, 5u8);
     assert_eq!(&instance.variable_items, u8_items);
 }
@@ -227,7 +228,7 @@ fn test_interaction_from_iter_derives() {
 fn test_empty_dst_slice_data() {
     let empty_u16_data: &[u16] = &[];
     let instance: Box<BasicSliceStruct<u16>> =
-        BasicSliceStruct::basic_slice_builder(empty_u16_data.len(), empty_u16_data);
+        BasicSliceStruct::basic_slice_builder_from_slice(empty_u16_data.len(), empty_u16_data);
     assert_eq!(instance.id, 0);
     assert!(instance.elements.is_empty());
     assert_eq!(&instance.elements, empty_u16_data);
@@ -250,7 +251,8 @@ struct ZstSliceStruct {
 #[test]
 fn test_zst_slice_dst() {
     let zst_data_slice: &[()] = &[(), (), (), ()];
-    let instance: Box<ZstSliceStruct> = ZstSliceStruct::build_zst_slice(0xAB_CDEF, zst_data_slice);
+    let instance: Box<ZstSliceStruct> =
+        ZstSliceStruct::build_zst_slice_from_slice(0xAB_CDEF, zst_data_slice);
     assert_eq!(instance.a, 0xAB_CDEF);
     assert_eq!(instance.unit_slice.len(), 4);
 }
@@ -284,28 +286,28 @@ impl ExactSizeIterator for FaultyIter {
 #[should_panic(
     expected = "Mismatch between iterator-reported length and the number of items produced by the iterator"
 )]
-fn test_build_from_iter_with_too_many_items() {
+fn test_build_with_too_many_items() {
     let iterator_with_wrong_len = FaultyIter {
         items_to_yield: 20,
         len_to_return: 10,
     };
 
     // This call is expected to panic because the iterator's `len()` is misleading.
-    let _ = BasicSliceStruct::<u8>::basic_slice_builder_from_iter(42, iterator_with_wrong_len);
+    let _ = BasicSliceStruct::<u8>::basic_slice_builder(42, iterator_with_wrong_len);
 }
 
 #[test]
 #[should_panic(
     expected = "Mismatch between iterator-reported length and the number of items produced by the iterator"
 )]
-fn test_build_from_iter_with_too_few_items() {
+fn test_build_with_too_few_items() {
     let iterator_with_wrong_len = FaultyIter {
         items_to_yield: 10,
         len_to_return: 20,
     };
 
     // This call is expected to panic because the iterator's `len()` is misleading.
-    let _ = BasicSliceStruct::<u8>::basic_slice_builder_from_iter(42, iterator_with_wrong_len);
+    let _ = BasicSliceStruct::<u8>::basic_slice_builder(42, iterator_with_wrong_len);
 }
 
 // a trait we'll use in our DST

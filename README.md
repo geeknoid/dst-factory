@@ -51,16 +51,15 @@ struct User {
     signing_key: [u8],
 }
 
-// allocate one user with a 4 byte key
-let a = User::build(33, &[0, 1, 2, 3]);
+// allocate one user with a 4-byte key
+let a = User::build(33, [0, 1, 2, 3]);
 
-// allocate another user with a 5 byte key
-let b = User::build(33, &[0, 1, 2, 3, 4]);
+// allocate another user with a 5-byte key
+let b = User::build_from_slice(33, &[0, 1, 2, 3, 4]);
 
 // allocate another user, this time using an iterator
-let v = vec![0u8, 1, 2, 3, 4];
-let iter = v.into_iter();
-let c = User::build_from_iter(33, iter);
+let v = vec![0, 1, 2, 3, 4];
+let c = User::build(33, v);
 ```
 Here's another example, this time using a string as the last field of a struct:
 
@@ -127,21 +126,21 @@ always return boxed instances of the structs.
 
 The common use case for the `#[make_dst_factory]` attribute is to not pass any arguments.
 This results in factory functions called `build` when using a string or dynamic trait as the
-last field of the struct, and `build` and `build_from_iter` when using an array as the last
+last field of the struct, and `build` and `build` when using an array as the last
 field of the struct.
 
 The generated functions are private by default and have the following signatures:
 
 ```ignore
 // for arrays
-fn build(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>
-where
-    last_field_type: Clone;
-
-fn build_from_iter<G>(field1, field2, ..., last_field: G) -> Box<Self>
+fn build<G>(field1, field2, ..., last_field: G) -> Box<Self>
 where
     G: IntoIterator<Item = last_field_type>,
     <G as IntoIterator>::IntoIter: ExactSizeIterator,
+
+fn build_from_slice(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>
+where
+    last_field_type: Copy;
 
 // for strings
 fn build(field1, field2, ..., last_field: impl AsRef<str>) -> Box<Self>;
@@ -163,13 +162,13 @@ grammar is:
 Some examples:
 
 ```ignore
-// The factory functions will be private and called `create` and `create_from_iter`
+// The factory functions will be private and called `create` and `create_from_slice`
 #[make_dst_factory(create)]
 
-// The factory functions will be public and called `create` and `create_from_iter`
+// The factory functions will be public and called `create` and `create_from_slice`
 #[make_dst_factory(create, pub)]
 
-// The factory functions will be private, called `create` and `create_from_iter`, and support the `no_std` environment
+// The factory functions will be private, called `create` and `create_from_slice`, and support the `no_std` environment
 #[make_dst_factory(create, no_std)]
 ```
 

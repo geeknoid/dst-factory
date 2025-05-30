@@ -35,7 +35,7 @@ fn main() {
     println!("User age : {}", user.age);
 
     // Create a Credential instance.
-    let cred: Box<Credential> = Credential::build(60, &[0, 1, 2, 3]);
+    let cred: Box<Credential> = Credential::build_from_slice(60, &[0, 1, 2, 3]);
     println!("TTL: {}", &cred.ttl);
     println!("Key: {:?}", &cred.key);
 
