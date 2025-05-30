@@ -175,7 +175,10 @@ use macro_args::MacroArgs;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use syn::token::Where;
-use syn::{Field, Fields, Generics, Ident, Index, ItemStruct, TraitBoundModifier, Type, TypePath, parse::Result as SynResult, punctuated::Punctuated, spanned::Spanned, TypeSlice, TypeTraitObject};
+use syn::{
+    Field, Fields, Generics, Ident, Index, ItemStruct, Type, TypePath, TypeSlice, TypeTraitObject,
+    parse::Result as SynResult, punctuated::Punctuated, spanned::Spanned,
+};
 
 enum TailKind {
     Slice(TypeSlice),
@@ -215,7 +218,9 @@ impl StructInfo<'_> {
                     Type::Path(TypePath { path, .. })
                         if path.segments.last().is_some_and(|s| s.ident == "str") => {}
 
-                    Type::TraitObject(trait_object) => tail_kind = TailKind::TraitObject(trait_object.clone()),
+                    Type::TraitObject(trait_object) => {
+                        tail_kind = TailKind::TraitObject(trait_object.clone());
+                    }
                     Type::Slice(type_slice) => tail_kind = TailKind::Slice(type_slice.clone()),
 
                     _ => {
@@ -534,14 +539,14 @@ fn generate_factory_for_iter_arg(
         // Write each element from the iterator into the tail field
         let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
         let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
-        for element in iter {
+        iter.for_each(|element| {
             if guard.initialized == len {
                 panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
             }
 
             ::core::ptr::write(tail_ptr.add(guard.initialized), element);
             guard.initialized += 1;
-        }
+        });
 
         if guard.initialized != len {
             panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
@@ -634,25 +639,30 @@ fn generate_factory_for_trait_arg(
     header_layout_tokens: &TokenStream,
     tail_param_tuple_idx: &Index,
 ) -> SynResult<TokenStream> {
-    let mut main_trait_path: Option<&syn::Path> = None;
+    // Verify that the trait object is not a higher-rank trait bound
     for bound in &type_trait_object.bounds {
         if let syn::TypeParamBound::Trait(trait_bound) = bound {
-            if trait_bound.paren_token.is_none()
-                && matches!(trait_bound.modifier, TraitBoundModifier::None)
-            {
-                // Use the first simple trait bound found
-                main_trait_path = Some(&trait_bound.path);
-                break;
+            if trait_bound.lifetimes.is_some() {
+                return Err(syn::Error::new_spanned(
+                    trait_bound,
+                    "Higher-rank trait bounds (e.g., `for<'a> dyn Trait<'a>`) are not supported for the tail field.",
+                ));
             }
         }
     }
 
-    let Some(trait_path) = main_trait_path else {
-        return Err(syn::Error::new_spanned(
-            type_trait_object,
-            "Could not determine the main trait for the dyn Trait field. Only simple trait bounds like 'dyn MyTrait' are supported. Ensure the trait is not a higher-rank trait bound (e.g. for<...>) directly in this position.",
-        ));
-    };
+    // Extract the primary trait path from the bounds.
+    let trait_path = type_trait_object
+        .bounds
+        .iter()
+        .find_map(|bound| {
+            if let syn::TypeParamBound::Trait(trait_bound) = bound {
+                Some(&trait_bound.path)
+            } else {
+                None // Not a trait bound (e.g., a lifetime bound like `'a`).
+            }
+        })
+        .unwrap();
 
     let factory_name_ident = &macro_args.base_factory_name;
     let factory_doc_string = format!(
@@ -811,9 +821,9 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 /// ```
 #[proc_macro_attribute]
 pub fn make_dst_factory(
-    attr_args_ts: proc_macro::TokenStream,
-    item_ts: proc_macro::TokenStream,
+    attr_args: proc_macro::TokenStream,
+    item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let result = make_dst_factory_impl(attr_args_ts.into(), item_ts.into());
+    let result = make_dst_factory_impl(attr_args.into(), item.into());
     result.unwrap_or_else(|err| err.to_compile_error()).into()
 }

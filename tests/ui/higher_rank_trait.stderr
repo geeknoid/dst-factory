@@ -1,0 +1,5 @@
+error: Higher-rank trait bounds (e.g., `for<'a> dyn Trait<'a>`) are not supported for the tail field.
+ --> tests/ui/higher_rank_trait.rs:8:15
+  |
+8 |     data: dyn for<'a> MyTrait<'b>,
+  |               ^^^^^^^^^^^^^^^^^^^

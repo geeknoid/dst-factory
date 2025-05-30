@@ -368,6 +368,7 @@ fn test_error_paths() {
     t.compile_fail("tests/ui/no_comma_after_visibility.rs");
     t.compile_fail("tests/ui/need_no_std.rs");
     t.compile_fail("tests/ui/bad_str.rs");
+    t.compile_fail("tests/ui/higher_rank_trait.rs");
 
     // this gives a different error in CI then locally (Windows vs. Linux difference?)
     // t.compile_fail("tests/ui/multiple_dst_fields.rs");
