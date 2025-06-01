@@ -10,7 +10,7 @@ struct BasicStrStruct {
 }
 
 #[test]
-fn test_basic_str_usage() {
+fn basic_str_usage() {
     for i in 0..64 {
         let s = ".".repeat(i);
 
@@ -28,7 +28,7 @@ struct LongFormStrStruct {
 }
 
 #[test]
-fn test_long_form_str_usage() {
+fn long_form_str_usage() {
     for i in 0..64 {
         let s = ".".repeat(i);
 
@@ -46,7 +46,7 @@ struct BasicSliceStruct<T> {
 }
 
 #[test]
-fn test_basic_slice_usage() {
+fn basic_slice_usage() {
     for i in 0..64 {
         let v = vec!['*'; i];
 
@@ -65,7 +65,7 @@ struct PublicBuilderStruct {
 }
 
 #[test]
-fn test_public_builder() {
+fn public_builder() {
     let instance: Box<PublicBuilderStruct> = PublicBuilderStruct::create_publicly(404, "Not Found");
     assert_eq!(instance.code, 404);
     assert_eq!(&instance.message, "Not Found");
@@ -78,7 +78,7 @@ struct CrateBuilderStruct {
 }
 
 #[test]
-fn test_crate_builder() {
+fn crate_builder() {
     let instance: Box<CrateBuilderStruct> = CrateBuilderStruct::create_for_crate(3, "Admin Level");
     assert_eq!(instance.level, 3);
     assert_eq!(&instance.description, "Admin Level");
@@ -91,7 +91,7 @@ struct DefaultBuilderNameStruct {
 }
 
 #[test]
-fn test_default_builder_name() {
+fn default_builder_name() {
     let instance: Box<DefaultBuilderNameStruct> =
         DefaultBuilderNameStruct::build(1_234_567_890, "default_tag");
     assert_eq!(instance.value, 1_234_567_890);
@@ -104,7 +104,7 @@ struct OnlyStrField {
 }
 
 #[test]
-fn test_only_str_dst_field() {
+fn only_str_dst_field() {
     let instance: Box<OnlyStrField> = OnlyStrField::build_only_str("This is the only content.");
     assert_eq!(&instance.content, "This is the only content.");
 }
@@ -115,12 +115,25 @@ struct OnlySliceField<T: Clone> {
 }
 
 #[test]
-fn test_only_slice_dst_field() {
+fn only_slice_dst_field() {
     let char_data: &[char] = &['x', 'y', 'z'];
     let instance: Box<OnlySliceField<char>> =
         OnlySliceField::build_only_slice_from_slice(char_data);
     assert_eq!(&instance.items_data, char_data);
 }
+
+/*
+#[make_dst_factory]
+struct OnlyTraitField {
+    producer: dyn NumberProducer,
+}
+
+#[test]
+fn only_trait_dst_field() {
+    let instance: Box<OnlyTraitField> = OnlyTraitField::build(TenProducer{});
+    assert_eq!(instance.producer.get_number(), 10);
+}
+*/
 
 #[make_dst_factory(build_generic_lifetime_str)]
 struct GenericLifetimeStrStruct<'a, K: Default> {
@@ -130,7 +143,7 @@ struct GenericLifetimeStrStruct<'a, K: Default> {
 }
 
 #[test]
-fn test_generic_lifetime_str_dst() {
+fn generic_lifetime_str_dst() {
     let my_key = String::from("key_data");
     let default_key: String = String::default();
     let instance: Box<GenericLifetimeStrStruct<String>> =
@@ -156,7 +169,7 @@ struct GenericConstStruct<const SZ: usize> {
 }
 
 #[test]
-fn test_generic_const_dst() {
+fn generic_const_dst() {
     let instance: Box<GenericConstStruct<2>> =
         GenericConstStruct::build(42, [0, 1], [3, 4], "dynamic payload part");
     assert_eq!(instance.id, 42);
@@ -175,7 +188,7 @@ where
 }
 
 #[test]
-fn test_complex_fields_before_dst() {
+fn complex_fields_before_dst() {
     let instance: Box<ComplexFieldsStruct<u8>> = ComplexFieldsStruct::build_complex_fields(
         (1.0, -2.5, 3.0),
         Some(vec!["tag1".to_string(), "tag2".to_string()]),
@@ -200,7 +213,7 @@ where
 }
 
 #[test]
-fn test_struct_from_iter_where_clause() {
+fn struct_from_iter_where_clause() {
     let u8_items: &[u8] = &[11, 22, 33];
     let instance: Box<WhereClauseStruct<u8>> =
         WhereClauseStruct::build_where_clause_from_slice(5u8, u8_items);
@@ -216,7 +229,7 @@ struct DerivedExampleStruct {
 }
 
 #[test]
-fn test_interaction_from_iter_derives() {
+fn interaction_from_iter_derives() {
     let instance: Box<DerivedExampleStruct> =
         DerivedExampleStruct::build_derived(99, "derived_name");
     assert_eq!(instance.id_val, 99);
@@ -225,7 +238,7 @@ fn test_interaction_from_iter_derives() {
 }
 
 #[test]
-fn test_empty_dst_slice_data() {
+fn empty_dst_slice_data() {
     let empty_u16_data: &[u16] = &[];
     let instance: Box<BasicSliceStruct<u16>> =
         BasicSliceStruct::basic_slice_builder_from_slice(empty_u16_data.len(), empty_u16_data);
@@ -235,7 +248,7 @@ fn test_empty_dst_slice_data() {
 }
 
 #[test]
-fn test_empty_dst_str_data() {
+fn empty_dst_str_data() {
     let instance: Box<BasicStrStruct> = BasicStrStruct::basic_str_builder(0, "");
     assert_eq!(instance.id, 0);
     assert!(instance.text_data.is_empty());
@@ -249,7 +262,7 @@ struct ZstSliceStruct {
 }
 
 #[test]
-fn test_zst_slice_dst() {
+fn zst_slice_dst() {
     let zst_data_slice: &[()] = &[(), (), (), ()];
     let instance: Box<ZstSliceStruct> =
         ZstSliceStruct::build_zst_slice_from_slice(0xAB_CDEF, zst_data_slice);
@@ -286,7 +299,7 @@ impl ExactSizeIterator for FaultyIter {
 #[should_panic(
     expected = "Mismatch between iterator-reported length and the number of items produced by the iterator"
 )]
-fn test_build_with_too_many_items() {
+fn build_with_too_many_items() {
     let iterator_with_wrong_len = FaultyIter {
         items_to_yield: 20,
         len_to_return: 10,
@@ -300,7 +313,7 @@ fn test_build_with_too_many_items() {
 #[should_panic(
     expected = "Mismatch between iterator-reported length and the number of items produced by the iterator"
 )]
-fn test_build_with_too_few_items() {
+fn build_with_too_few_items() {
     let iterator_with_wrong_len = FaultyIter {
         items_to_yield: 10,
         len_to_return: 20,
@@ -338,7 +351,7 @@ struct Node {
 }
 
 #[test]
-fn test_dst_with_trait_object() {
+fn dst_with_trait_object() {
     // allocate an instance with one implementation of the trait
     let a = Node::build(33, FortyTwoProducer {});
     assert_eq!(42, a.producer.get_number());
@@ -350,14 +363,14 @@ fn test_dst_with_trait_object() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn test_no_std() {
+fn no_std() {
     let t = trybuild::TestCases::new();
     t.pass("tests/ui/no_std.rs");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn test_error_paths() {
+fn error_paths() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/string_in_attribute.rs");
     t.compile_fail("tests/ui/struct_with_no_fields.rs");

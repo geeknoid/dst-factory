@@ -1,0 +1,3010 @@
+#![feature(prelude_import)]
+#![allow(clippy::literal_string_with_formatting_args)]
+#[prelude_import]
+use std::prelude::rust_2024::*;
+#[macro_use]
+extern crate std;
+use dst_factory::make_dst_factory;
+use std::fmt::Debug;
+struct BasicStrStruct {
+    id: usize,
+    text_data: str,
+}
+impl BasicStrStruct {
+    ///Creates an instance of `Box<BasicStrStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn basic_str_builder(
+        id: usize,
+        text_data: impl ::core::convert::AsRef<str>,
+    ) -> ::std::boxed::Box<Self> {
+        let args = (id, text_data);
+        match (&::core::any::TypeId::of::<str>(), &::core::any::TypeId::of::<str>()) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        let s = args.1.as_ref();
+        let len = s.len();
+        let buffer = ::core::mem::MaybeUninit::<[(usize,); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).text_data;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<u8>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).id), args.0);
+                let tail_ptr = (&raw mut (*fat_ptr).text_data).cast::<u8>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_basic_str_usage"]
+#[doc(hidden)]
+pub const test_basic_str_usage: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_basic_str_usage"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 13usize,
+        start_col: 4usize,
+        end_line: 13usize,
+        end_col: 24usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_basic_str_usage()),
+    ),
+};
+fn test_basic_str_usage() {
+    for i in 0..64 {
+        let s = ".".repeat(i);
+        let instance: Box<BasicStrStruct> = BasicStrStruct::basic_str_builder(
+            i,
+            s.as_str(),
+        );
+        match (&instance.id, &i) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        match (&&instance.text_data, &s.as_str()) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+    }
+}
+struct LongFormStrStruct {
+    id: usize,
+    text_data: std::primitive::str,
+}
+impl LongFormStrStruct {
+    ///Creates an instance of `Box<LongFormStrStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build(
+        id: usize,
+        text_data: impl ::core::convert::AsRef<str>,
+    ) -> ::std::boxed::Box<Self> {
+        let args = (id, text_data);
+        match (
+            &::core::any::TypeId::of::<std::primitive::str>(),
+            &::core::any::TypeId::of::<str>(),
+        ) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        let s = args.1.as_ref();
+        let len = s.len();
+        let buffer = ::core::mem::MaybeUninit::<[(usize,); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).text_data;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<u8>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).id), args.0);
+                let tail_ptr = (&raw mut (*fat_ptr).text_data).cast::<u8>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_long_form_str_usage"]
+#[doc(hidden)]
+pub const test_long_form_str_usage: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_long_form_str_usage"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 31usize,
+        start_col: 4usize,
+        end_line: 31usize,
+        end_col: 28usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_long_form_str_usage()),
+    ),
+};
+fn test_long_form_str_usage() {
+    for i in 0..64 {
+        let s = ".".repeat(i);
+        let instance: Box<LongFormStrStruct> = LongFormStrStruct::build(i, s.as_str());
+        match (&instance.id, &i) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        match (&&instance.text_data, &s.as_str()) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+    }
+}
+struct BasicSliceStruct<T> {
+    id: usize,
+    elements: [T],
+}
+impl<T> BasicSliceStruct<T> {
+    ///Creates an instance of `Box<BasicSliceStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn basic_slice_builder_from_slice(
+        id: usize,
+        elements: &[T],
+    ) -> ::std::boxed::Box<Self>
+    where
+        T: ::core::marker::Copy,
+    {
+        let args = (id, elements);
+        let s = args.1.as_ref();
+        let len = s.len();
+        let buffer = ::core::mem::MaybeUninit::<[(usize,); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).elements;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<T>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).id), args.0);
+                let tail_ptr = (&raw mut (*fat_ptr).elements).cast::<T>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+    ///Creates an instance of `Box<BasicSliceStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn basic_slice_builder<M>(id: usize, elements: M) -> ::std::boxed::Box<Self>
+    where
+        M: ::core::iter::IntoIterator<Item = T>,
+        <M as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator,
+    {
+        struct Guard<T> {
+            mem_ptr: *mut u8,
+            tail_ptr: *mut T,
+            initialized: usize,
+            layout: ::core::alloc::Layout,
+        }
+        impl<T> Drop for Guard<T> {
+            fn drop(&mut self) {
+                unsafe {
+                    let slice_ptr = ::core::ptr::slice_from_raw_parts_mut(
+                        self.tail_ptr,
+                        self.initialized,
+                    );
+                    ::core::ptr::drop_in_place(slice_ptr);
+                    ::std::alloc::dealloc(self.mem_ptr, self.layout);
+                }
+            }
+        }
+        let args = (id, elements);
+        let iter = args.1.into_iter();
+        let len = iter.len();
+        let buffer = ::core::mem::MaybeUninit::<[(usize,); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).elements;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<T>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).id), args.0);
+                let tail_ptr = (&raw mut (*fat_ptr).elements).cast::<T>();
+                let mut guard = Guard {
+                    mem_ptr,
+                    tail_ptr,
+                    layout,
+                    initialized: 0,
+                };
+                iter.for_each(|element| {
+                    if guard.initialized == len {
+                        {
+                            ::core::panicking::panic_fmt(
+                                format_args!(
+                                    "Mismatch between iterator-reported length and the number of items produced by the iterator",
+                                ),
+                            );
+                        };
+                    }
+                    ::core::ptr::write(tail_ptr.add(guard.initialized), element);
+                    guard.initialized += 1;
+                });
+                if guard.initialized != len {
+                    {
+                        ::core::panicking::panic_fmt(
+                            format_args!(
+                                "Mismatch between iterator-reported length and the number of items produced by the iterator",
+                            ),
+                        );
+                    };
+                }
+                ::std::mem::forget(guard);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_basic_slice_usage"]
+#[doc(hidden)]
+pub const test_basic_slice_usage: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_basic_slice_usage"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 49usize,
+        start_col: 4usize,
+        end_line: 49usize,
+        end_col: 26usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_basic_slice_usage()),
+    ),
+};
+fn test_basic_slice_usage() {
+    for i in 0..64 {
+        let v = ::alloc::vec::from_elem('*', i);
+        let instance: Box<BasicSliceStruct<char>> = BasicSliceStruct::basic_slice_builder_from_slice(
+            i,
+            v.as_slice(),
+        );
+        match (&instance.id, &i) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        match (&&instance.elements, &v.as_slice()) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+    }
+}
+struct PublicBuilderStruct {
+    code: std::primitive::u16,
+    message: std::primitive::str,
+}
+impl PublicBuilderStruct {
+    ///Creates an instance of `Box<PublicBuilderStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    pub fn create_publicly(
+        code: std::primitive::u16,
+        message: impl ::core::convert::AsRef<str>,
+    ) -> ::std::boxed::Box<Self> {
+        let args = (code, message);
+        match (
+            &::core::any::TypeId::of::<std::primitive::str>(),
+            &::core::any::TypeId::of::<str>(),
+        ) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        let s = args.1.as_ref();
+        let len = s.len();
+        let buffer = ::core::mem::MaybeUninit::<[(std::primitive::u16,); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).message;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<u8>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).code), args.0);
+                let tail_ptr = (&raw mut (*fat_ptr).message).cast::<u8>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_public_builder"]
+#[doc(hidden)]
+pub const test_public_builder: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_public_builder"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 68usize,
+        start_col: 4usize,
+        end_line: 68usize,
+        end_col: 23usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_public_builder()),
+    ),
+};
+fn test_public_builder() {
+    let instance: Box<PublicBuilderStruct> = PublicBuilderStruct::create_publicly(
+        404,
+        "Not Found",
+    );
+    match (&instance.code, &404) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&&instance.message, &"Not Found") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+}
+struct CrateBuilderStruct {
+    level: u8,
+    description: str,
+}
+impl CrateBuilderStruct {
+    ///Creates an instance of `Box<CrateBuilderStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    pub(crate) fn create_for_crate(
+        level: u8,
+        description: impl ::core::convert::AsRef<str>,
+    ) -> ::std::boxed::Box<Self> {
+        let args = (level, description);
+        match (&::core::any::TypeId::of::<str>(), &::core::any::TypeId::of::<str>()) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        let s = args.1.as_ref();
+        let len = s.len();
+        let buffer = ::core::mem::MaybeUninit::<[(u8,); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).description;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<u8>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).level), args.0);
+                let tail_ptr = (&raw mut (*fat_ptr).description).cast::<u8>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_crate_builder"]
+#[doc(hidden)]
+pub const test_crate_builder: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_crate_builder"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 81usize,
+        start_col: 4usize,
+        end_line: 81usize,
+        end_col: 22usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_crate_builder()),
+    ),
+};
+fn test_crate_builder() {
+    let instance: Box<CrateBuilderStruct> = CrateBuilderStruct::create_for_crate(
+        3,
+        "Admin Level",
+    );
+    match (&instance.level, &3) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&&instance.description, &"Admin Level") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+}
+struct DefaultBuilderNameStruct {
+    value: i64,
+    name_tag: str,
+}
+impl DefaultBuilderNameStruct {
+    ///Creates an instance of `Box<DefaultBuilderNameStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build(
+        value: i64,
+        name_tag: impl ::core::convert::AsRef<str>,
+    ) -> ::std::boxed::Box<Self> {
+        let args = (value, name_tag);
+        match (&::core::any::TypeId::of::<str>(), &::core::any::TypeId::of::<str>()) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        let s = args.1.as_ref();
+        let len = s.len();
+        let buffer = ::core::mem::MaybeUninit::<[(i64,); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).name_tag;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<u8>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).value), args.0);
+                let tail_ptr = (&raw mut (*fat_ptr).name_tag).cast::<u8>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_default_builder_name"]
+#[doc(hidden)]
+pub const test_default_builder_name: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_default_builder_name"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 94usize,
+        start_col: 4usize,
+        end_line: 94usize,
+        end_col: 29usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_default_builder_name()),
+    ),
+};
+fn test_default_builder_name() {
+    let instance: Box<DefaultBuilderNameStruct> = DefaultBuilderNameStruct::build(
+        1_234_567_890,
+        "default_tag",
+    );
+    match (&instance.value, &1_234_567_890) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&&instance.name_tag, &"default_tag") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+}
+struct OnlyStrField {
+    content: str,
+}
+impl OnlyStrField {
+    ///Creates an instance of `Box<OnlyStrField>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build_only_str(
+        content: impl ::core::convert::AsRef<str>,
+    ) -> ::std::boxed::Box<Self> {
+        let args = (content,);
+        match (&::core::any::TypeId::of::<str>(), &::core::any::TypeId::of::<str>()) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        let s = args.0.as_ref();
+        let len = s.len();
+        let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<u8>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                let tail_ptr = (&raw mut (*fat_ptr).content).cast::<u8>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_only_str_dst_field"]
+#[doc(hidden)]
+pub const test_only_str_dst_field: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_only_str_dst_field"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 107usize,
+        start_col: 4usize,
+        end_line: 107usize,
+        end_col: 27usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_only_str_dst_field()),
+    ),
+};
+fn test_only_str_dst_field() {
+    let instance: Box<OnlyStrField> = OnlyStrField::build_only_str(
+        "This is the only content.",
+    );
+    match (&&instance.content, &"This is the only content.") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+}
+struct OnlySliceField<T: Clone> {
+    items_data: [T],
+}
+impl<T: Clone> OnlySliceField<T> {
+    ///Creates an instance of `Box<OnlySliceField>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build_only_slice_from_slice(items_data: &[T]) -> ::std::boxed::Box<Self>
+    where
+        T: ::core::marker::Copy,
+    {
+        let args = (items_data,);
+        let s = args.0.as_ref();
+        let len = s.len();
+        let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<T>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                let tail_ptr = (&raw mut (*fat_ptr).items_data).cast::<T>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+    ///Creates an instance of `Box<OnlySliceField>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build_only_slice<G>(items_data: G) -> ::std::boxed::Box<Self>
+    where
+        G: ::core::iter::IntoIterator<Item = T>,
+        <G as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator,
+    {
+        struct Guard<T> {
+            mem_ptr: *mut u8,
+            tail_ptr: *mut T,
+            initialized: usize,
+            layout: ::core::alloc::Layout,
+        }
+        impl<T> Drop for Guard<T> {
+            fn drop(&mut self) {
+                unsafe {
+                    let slice_ptr = ::core::ptr::slice_from_raw_parts_mut(
+                        self.tail_ptr,
+                        self.initialized,
+                    );
+                    ::core::ptr::drop_in_place(slice_ptr);
+                    ::std::alloc::dealloc(self.mem_ptr, self.layout);
+                }
+            }
+        }
+        let args = (items_data,);
+        let iter = args.0.into_iter();
+        let len = iter.len();
+        let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<T>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                let tail_ptr = (&raw mut (*fat_ptr).items_data).cast::<T>();
+                let mut guard = Guard {
+                    mem_ptr,
+                    tail_ptr,
+                    layout,
+                    initialized: 0,
+                };
+                iter.for_each(|element| {
+                    if guard.initialized == len {
+                        {
+                            ::core::panicking::panic_fmt(
+                                format_args!(
+                                    "Mismatch between iterator-reported length and the number of items produced by the iterator",
+                                ),
+                            );
+                        };
+                    }
+                    ::core::ptr::write(tail_ptr.add(guard.initialized), element);
+                    guard.initialized += 1;
+                });
+                if guard.initialized != len {
+                    {
+                        ::core::panicking::panic_fmt(
+                            format_args!(
+                                "Mismatch between iterator-reported length and the number of items produced by the iterator",
+                            ),
+                        );
+                    };
+                }
+                ::std::mem::forget(guard);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_only_slice_dst_field"]
+#[doc(hidden)]
+pub const test_only_slice_dst_field: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_only_slice_dst_field"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 118usize,
+        start_col: 4usize,
+        end_line: 118usize,
+        end_col: 29usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_only_slice_dst_field()),
+    ),
+};
+fn test_only_slice_dst_field() {
+    let char_data: &[char] = &['x', 'y', 'z'];
+    let instance: Box<OnlySliceField<char>> = OnlySliceField::build_only_slice_from_slice(
+        char_data,
+    );
+    match (&&instance.items_data, &char_data) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+}
+struct OnlyTraitField {
+    content: dyn NumberProducer,
+}
+impl OnlyTraitField {
+    ///Builds an instance of `Box<OnlyTraitField>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build<G>(content: G) -> ::std::boxed::Box<Self>
+    where
+        G: NumberProducer + Sized,
+    {
+        let args = (content,);
+        {
+            ::std::io::_print(format_args!("HELLO\n"));
+        };
+        let s = args.0;
+        let trait_object: &dyn NumberProducer = &s;
+        let (_, vtable): (*const G, *const ()) = unsafe {
+            ::core::mem::transmute(trait_object)
+        };
+        let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
+        let layout = layout
+            .extend(::core::alloc::Layout::new::<G>())
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, *const ()),
+                    *mut Self,
+                >((mem_ptr, vtable));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                let tail_ptr = (&raw mut (*fat_ptr).content).cast::<G>();
+                ::core::ptr::copy_nonoverlapping(&raw const s, tail_ptr, 1);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+struct GenericLifetimeStrStruct<'a, K: Default> {
+    key_ref: &'a K,
+    id: usize,
+    payload: str,
+}
+impl<'a, K: Default> GenericLifetimeStrStruct<'a, K> {
+    ///Creates an instance of `Box<GenericLifetimeStrStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build_generic_lifetime_str(
+        key_ref: &'a K,
+        id: usize,
+        payload: impl ::core::convert::AsRef<str>,
+    ) -> ::std::boxed::Box<Self> {
+        let args = (key_ref, id, payload);
+        match (&::core::any::TypeId::of::<str>(), &::core::any::TypeId::of::<str>()) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        let s = args.2.as_ref();
+        let len = s.len();
+        let buffer = ::core::mem::MaybeUninit::<[(&'a K, usize); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).payload;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<u8>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).key_ref), args.0);
+                ::core::ptr::write(&mut ((*fat_ptr).id), args.1);
+                let tail_ptr = (&raw mut (*fat_ptr).payload).cast::<u8>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_generic_lifetime_str_dst"]
+#[doc(hidden)]
+pub const test_generic_lifetime_str_dst: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_generic_lifetime_str_dst"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 144usize,
+        start_col: 4usize,
+        end_line: 144usize,
+        end_col: 33usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_generic_lifetime_str_dst()),
+    ),
+};
+fn test_generic_lifetime_str_dst() {
+    let my_key = String::from("key_data");
+    let default_key: String = String::default();
+    let instance: Box<GenericLifetimeStrStruct<String>> = GenericLifetimeStrStruct::build_generic_lifetime_str(
+        &my_key,
+        77,
+        "dynamic payload part",
+    );
+    match (&*instance.key_ref, &"key_data") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&instance.id, &77) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&&instance.payload, &"dynamic payload part") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    let instance2: Box<GenericLifetimeStrStruct<String>> = GenericLifetimeStrStruct::build_generic_lifetime_str(
+        &default_key,
+        78,
+        "another payload",
+    );
+    match (&*instance2.key_ref, &"") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&&instance2.payload, &"another payload") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+}
+const SOME_CONST: usize = 2;
+struct GenericConstStruct<const SZ: usize> {
+    id: usize,
+    array_data: [u8; SZ],
+    more: [u8; SOME_CONST],
+    payload: str,
+}
+impl<const SZ: usize> GenericConstStruct<SZ> {
+    ///Creates an instance of `Box<GenericConstStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build(
+        id: usize,
+        array_data: [u8; SZ],
+        more: [u8; SOME_CONST],
+        payload: impl ::core::convert::AsRef<str>,
+    ) -> ::std::boxed::Box<Self> {
+        let args = (id, array_data, more, payload);
+        match (&::core::any::TypeId::of::<str>(), &::core::any::TypeId::of::<str>()) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        let s = args.3.as_ref();
+        let len = s.len();
+        let buffer = ::core::mem::MaybeUninit::<
+            [(usize, [u8; SZ], [u8; SOME_CONST]); 32],
+        >::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).payload;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<u8>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).id), args.0);
+                ::core::ptr::write(&mut ((*fat_ptr).array_data), args.1);
+                ::core::ptr::write(&mut ((*fat_ptr).more), args.2);
+                let tail_ptr = (&raw mut (*fat_ptr).payload).cast::<u8>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_generic_const_dst"]
+#[doc(hidden)]
+pub const test_generic_const_dst: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_generic_const_dst"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 170usize,
+        start_col: 4usize,
+        end_line: 170usize,
+        end_col: 26usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_generic_const_dst()),
+    ),
+};
+fn test_generic_const_dst() {
+    let instance: Box<GenericConstStruct<2>> = GenericConstStruct::build(
+        42,
+        [0, 1],
+        [3, 4],
+        "dynamic payload part",
+    );
+    match (&instance.id, &42) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&&instance.payload, &"dynamic payload part") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+}
+struct ComplexFieldsStruct<T>
+where
+    T: Debug,
+{
+    coordinates: (f32, f32, f32),
+    tags: Option<Vec<String>>,
+    dbg: T,
+    raw_log: str,
+}
+impl<T> ComplexFieldsStruct<T>
+where
+    T: Debug,
+{
+    ///Creates an instance of `Box<ComplexFieldsStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build_complex_fields(
+        coordinates: (f32, f32, f32),
+        tags: Option<Vec<String>>,
+        dbg: T,
+        raw_log: impl ::core::convert::AsRef<str>,
+    ) -> ::std::boxed::Box<Self> {
+        let args = (coordinates, tags, dbg, raw_log);
+        match (&::core::any::TypeId::of::<str>(), &::core::any::TypeId::of::<str>()) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        let s = args.3.as_ref();
+        let len = s.len();
+        let buffer = ::core::mem::MaybeUninit::<
+            [((f32, f32, f32), Option<Vec<String>>, T); 32],
+        >::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).raw_log;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<u8>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).coordinates), args.0);
+                ::core::ptr::write(&mut ((*fat_ptr).tags), args.1);
+                ::core::ptr::write(&mut ((*fat_ptr).dbg), args.2);
+                let tail_ptr = (&raw mut (*fat_ptr).raw_log).cast::<u8>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_complex_fields_before_dst"]
+#[doc(hidden)]
+pub const test_complex_fields_before_dst: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_complex_fields_before_dst"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 189usize,
+        start_col: 4usize,
+        end_line: 189usize,
+        end_col: 34usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_complex_fields_before_dst()),
+    ),
+};
+fn test_complex_fields_before_dst() {
+    let instance: Box<ComplexFieldsStruct<u8>> = ComplexFieldsStruct::build_complex_fields(
+        (1.0, -2.5, 3.0),
+        Some(
+            <[_]>::into_vec(
+                ::alloc::boxed::box_new(["tag1".to_string(), "tag2".to_string()]),
+            ),
+        ),
+        0,
+        "Log entry data here",
+    );
+    match (&instance.coordinates, &(1.0, -2.5, 3.0)) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (
+        &instance.tags,
+        &Some(
+            <[_]>::into_vec(
+                ::alloc::boxed::box_new(["tag1".to_string(), "tag2".to_string()]),
+            ),
+        ),
+    ) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&&instance.raw_log, &"Log entry data here") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+}
+struct WhereClauseStruct<T>
+where
+    T: Copy + Default + PartialEq + std::fmt::Debug,
+{
+    fixed_item: T,
+    variable_items: [T],
+}
+impl<T> WhereClauseStruct<T>
+where
+    T: Copy + Default + PartialEq + std::fmt::Debug,
+{
+    ///Creates an instance of `Box<WhereClauseStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build_where_clause_from_slice(
+        fixed_item: T,
+        variable_items: &[T],
+    ) -> ::std::boxed::Box<Self>
+    where
+        T: Copy + Default + PartialEq + std::fmt::Debug,
+        T: ::core::marker::Copy,
+    {
+        let args = (fixed_item, variable_items);
+        let s = args.1.as_ref();
+        let len = s.len();
+        let buffer = ::core::mem::MaybeUninit::<[(T,); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).variable_items;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<T>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).fixed_item), args.0);
+                let tail_ptr = (&raw mut (*fat_ptr).variable_items).cast::<T>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+    ///Creates an instance of `Box<WhereClauseStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build_where_clause<G>(fixed_item: T, variable_items: G) -> ::std::boxed::Box<Self>
+    where
+        G: ::core::iter::IntoIterator<Item = T>,
+        <G as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator,
+    {
+        struct Guard<T> {
+            mem_ptr: *mut u8,
+            tail_ptr: *mut T,
+            initialized: usize,
+            layout: ::core::alloc::Layout,
+        }
+        impl<T> Drop for Guard<T> {
+            fn drop(&mut self) {
+                unsafe {
+                    let slice_ptr = ::core::ptr::slice_from_raw_parts_mut(
+                        self.tail_ptr,
+                        self.initialized,
+                    );
+                    ::core::ptr::drop_in_place(slice_ptr);
+                    ::std::alloc::dealloc(self.mem_ptr, self.layout);
+                }
+            }
+        }
+        let args = (fixed_item, variable_items);
+        let iter = args.1.into_iter();
+        let len = iter.len();
+        let buffer = ::core::mem::MaybeUninit::<[(T,); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).variable_items;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<T>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).fixed_item), args.0);
+                let tail_ptr = (&raw mut (*fat_ptr).variable_items).cast::<T>();
+                let mut guard = Guard {
+                    mem_ptr,
+                    tail_ptr,
+                    layout,
+                    initialized: 0,
+                };
+                iter.for_each(|element| {
+                    if guard.initialized == len {
+                        {
+                            ::core::panicking::panic_fmt(
+                                format_args!(
+                                    "Mismatch between iterator-reported length and the number of items produced by the iterator",
+                                ),
+                            );
+                        };
+                    }
+                    ::core::ptr::write(tail_ptr.add(guard.initialized), element);
+                    guard.initialized += 1;
+                });
+                if guard.initialized != len {
+                    {
+                        ::core::panicking::panic_fmt(
+                            format_args!(
+                                "Mismatch between iterator-reported length and the number of items produced by the iterator",
+                            ),
+                        );
+                    };
+                }
+                ::std::mem::forget(guard);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_struct_from_iter_where_clause"]
+#[doc(hidden)]
+pub const test_struct_from_iter_where_clause: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_struct_from_iter_where_clause"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 214usize,
+        start_col: 4usize,
+        end_line: 214usize,
+        end_col: 38usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_struct_from_iter_where_clause()),
+    ),
+};
+fn test_struct_from_iter_where_clause() {
+    let u8_items: &[u8] = &[11, 22, 33];
+    let instance: Box<WhereClauseStruct<u8>> = WhereClauseStruct::build_where_clause_from_slice(
+        5u8,
+        u8_items,
+    );
+    match (&instance.fixed_item, &5u8) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&&instance.variable_items, &u8_items) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+}
+struct DerivedExampleStruct {
+    id_val: i32,
+    name_val: str,
+}
+impl DerivedExampleStruct {
+    ///Creates an instance of `Box<DerivedExampleStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build_derived(
+        id_val: i32,
+        name_val: impl ::core::convert::AsRef<str>,
+    ) -> ::std::boxed::Box<Self> {
+        let args = (id_val, name_val);
+        match (&::core::any::TypeId::of::<str>(), &::core::any::TypeId::of::<str>()) {
+            (left_val, right_val) => {
+                if !(*left_val == *right_val) {
+                    let kind = ::core::panicking::AssertKind::Eq;
+                    ::core::panicking::assert_failed(
+                        kind,
+                        &*left_val,
+                        &*right_val,
+                        ::core::option::Option::None,
+                    );
+                }
+            }
+        };
+        let s = args.1.as_ref();
+        let len = s.len();
+        let buffer = ::core::mem::MaybeUninit::<[(i32,); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).name_val;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<u8>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).id_val), args.0);
+                let tail_ptr = (&raw mut (*fat_ptr).name_val).cast::<u8>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+#[automatically_derived]
+impl ::core::fmt::Debug for DerivedExampleStruct {
+    #[inline]
+    fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+        ::core::fmt::Formatter::debug_struct_field2_finish(
+            f,
+            "DerivedExampleStruct",
+            "id_val",
+            &self.id_val,
+            "name_val",
+            &&self.name_val,
+        )
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_interaction_from_iter_derives"]
+#[doc(hidden)]
+pub const test_interaction_from_iter_derives: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_interaction_from_iter_derives"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 230usize,
+        start_col: 4usize,
+        end_line: 230usize,
+        end_col: 38usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_interaction_from_iter_derives()),
+    ),
+};
+fn test_interaction_from_iter_derives() {
+    let instance: Box<DerivedExampleStruct> = DerivedExampleStruct::build_derived(
+        99,
+        "derived_name",
+    );
+    match (&instance.id_val, &99) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&&instance.name_val, &"derived_name") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    if !!::alloc::__export::must_use({
+            let res = ::alloc::fmt::format(format_args!("{0:?}", instance));
+            res
+        })
+        .is_empty()
+    {
+        ::core::panicking::panic(
+            "assertion failed: !format!(\"{instance:?}\").is_empty()",
+        )
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_empty_dst_slice_data"]
+#[doc(hidden)]
+pub const test_empty_dst_slice_data: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_empty_dst_slice_data"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 239usize,
+        start_col: 4usize,
+        end_line: 239usize,
+        end_col: 29usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_empty_dst_slice_data()),
+    ),
+};
+fn test_empty_dst_slice_data() {
+    let empty_u16_data: &[u16] = &[];
+    let instance: Box<BasicSliceStruct<u16>> = BasicSliceStruct::basic_slice_builder_from_slice(
+        empty_u16_data.len(),
+        empty_u16_data,
+    );
+    match (&instance.id, &0) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    if !instance.elements.is_empty() {
+        ::core::panicking::panic("assertion failed: instance.elements.is_empty()")
+    }
+    match (&&instance.elements, &empty_u16_data) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+}
+extern crate test;
+#[rustc_test_marker = "test_empty_dst_str_data"]
+#[doc(hidden)]
+pub const test_empty_dst_str_data: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_empty_dst_str_data"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 249usize,
+        start_col: 4usize,
+        end_line: 249usize,
+        end_col: 27usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_empty_dst_str_data()),
+    ),
+};
+fn test_empty_dst_str_data() {
+    let instance: Box<BasicStrStruct> = BasicStrStruct::basic_str_builder(0, "");
+    match (&instance.id, &0) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    if !instance.text_data.is_empty() {
+        ::core::panicking::panic("assertion failed: instance.text_data.is_empty()")
+    }
+    match (&&instance.text_data, &"") {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+}
+struct ZstSliceStruct {
+    a: u64,
+    unit_slice: [()],
+}
+impl ZstSliceStruct {
+    ///Creates an instance of `Box<ZstSliceStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build_zst_slice_from_slice(a: u64, unit_slice: &[()]) -> ::std::boxed::Box<Self>
+    where
+        (): ::core::marker::Copy,
+    {
+        let args = (a, unit_slice);
+        let s = args.1.as_ref();
+        let len = s.len();
+        let buffer = ::core::mem::MaybeUninit::<[(u64,); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).unit_slice;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<()>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).a), args.0);
+                let tail_ptr = (&raw mut (*fat_ptr).unit_slice).cast::<()>();
+                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+    ///Creates an instance of `Box<ZstSliceStruct>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build_zst_slice<G>(a: u64, unit_slice: G) -> ::std::boxed::Box<Self>
+    where
+        G: ::core::iter::IntoIterator<Item = ()>,
+        <G as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator,
+    {
+        struct Guard<T> {
+            mem_ptr: *mut u8,
+            tail_ptr: *mut T,
+            initialized: usize,
+            layout: ::core::alloc::Layout,
+        }
+        impl<T> Drop for Guard<T> {
+            fn drop(&mut self) {
+                unsafe {
+                    let slice_ptr = ::core::ptr::slice_from_raw_parts_mut(
+                        self.tail_ptr,
+                        self.initialized,
+                    );
+                    ::core::ptr::drop_in_place(slice_ptr);
+                    ::std::alloc::dealloc(self.mem_ptr, self.layout);
+                }
+            }
+        }
+        let args = (a, unit_slice);
+        let iter = args.1.into_iter();
+        let len = iter.len();
+        let buffer = ::core::mem::MaybeUninit::<[(u64,); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, 0));
+            let tail_ptr = &raw const (*head_ptr).unit_slice;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(
+                ::core::alloc::Layout::array::<()>(len)
+                    .expect("Array exceeds maximum size allowed of isize::MAX"),
+            )
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, usize),
+                    *mut Self,
+                >((mem_ptr, len));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).a), args.0);
+                let tail_ptr = (&raw mut (*fat_ptr).unit_slice).cast::<()>();
+                let mut guard = Guard {
+                    mem_ptr,
+                    tail_ptr,
+                    layout,
+                    initialized: 0,
+                };
+                iter.for_each(|element| {
+                    if guard.initialized == len {
+                        {
+                            ::core::panicking::panic_fmt(
+                                format_args!(
+                                    "Mismatch between iterator-reported length and the number of items produced by the iterator",
+                                ),
+                            );
+                        };
+                    }
+                    ::core::ptr::write(tail_ptr.add(guard.initialized), element);
+                    guard.initialized += 1;
+                });
+                if guard.initialized != len {
+                    {
+                        ::core::panicking::panic_fmt(
+                            format_args!(
+                                "Mismatch between iterator-reported length and the number of items produced by the iterator",
+                            ),
+                        );
+                    };
+                }
+                ::std::mem::forget(guard);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_zst_slice_dst"]
+#[doc(hidden)]
+pub const test_zst_slice_dst: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_zst_slice_dst"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 263usize,
+        start_col: 4usize,
+        end_line: 263usize,
+        end_col: 22usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_zst_slice_dst()),
+    ),
+};
+fn test_zst_slice_dst() {
+    let zst_data_slice: &[()] = &[(), (), (), ()];
+    let instance: Box<ZstSliceStruct> = ZstSliceStruct::build_zst_slice_from_slice(
+        0xAB_CDEF,
+        zst_data_slice,
+    );
+    match (&instance.a, &0xAB_CDEF) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    match (&instance.unit_slice.len(), &4) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+}
+struct FaultyIter {
+    items_to_yield: usize,
+    len_to_return: usize,
+}
+impl Iterator for FaultyIter {
+    type Item = u8;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.items_to_yield > 0 {
+            self.items_to_yield -= 1;
+            Some(42)
+        } else {
+            None
+        }
+    }
+}
+impl ExactSizeIterator for FaultyIter {
+    fn len(&self) -> usize {
+        self.len_to_return
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_build_with_too_many_items"]
+#[doc(hidden)]
+pub const test_build_with_too_many_items: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_build_with_too_many_items"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 300usize,
+        start_col: 4usize,
+        end_line: 300usize,
+        end_col: 34usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::YesWithMessage(
+            "Mismatch between iterator-reported length and the number of items produced by the iterator",
+        ),
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_build_with_too_many_items()),
+    ),
+};
+#[should_panic(
+    expected = "Mismatch between iterator-reported length and the number of items produced by the iterator"
+)]
+fn test_build_with_too_many_items() {
+    let iterator_with_wrong_len = FaultyIter {
+        items_to_yield: 20,
+        len_to_return: 10,
+    };
+    let _ = BasicSliceStruct::<u8>::basic_slice_builder(42, iterator_with_wrong_len);
+}
+extern crate test;
+#[rustc_test_marker = "test_build_with_too_few_items"]
+#[doc(hidden)]
+pub const test_build_with_too_few_items: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_build_with_too_few_items"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 314usize,
+        start_col: 4usize,
+        end_line: 314usize,
+        end_col: 33usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::YesWithMessage(
+            "Mismatch between iterator-reported length and the number of items produced by the iterator",
+        ),
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_build_with_too_few_items()),
+    ),
+};
+#[should_panic(
+    expected = "Mismatch between iterator-reported length and the number of items produced by the iterator"
+)]
+fn test_build_with_too_few_items() {
+    let iterator_with_wrong_len = FaultyIter {
+        items_to_yield: 10,
+        len_to_return: 20,
+    };
+    let _ = BasicSliceStruct::<u8>::basic_slice_builder(42, iterator_with_wrong_len);
+}
+trait NumberProducer {
+    fn get_number(&self) -> u32;
+}
+struct FortyTwoProducer {}
+impl NumberProducer for FortyTwoProducer {
+    fn get_number(&self) -> u32 {
+        42
+    }
+}
+struct TenProducer {}
+impl NumberProducer for TenProducer {
+    fn get_number(&self) -> u32 {
+        10
+    }
+}
+struct Node {
+    count: u32,
+    producer: dyn NumberProducer,
+}
+impl Node {
+    ///Builds an instance of `Box<Node>`.
+    #[allow(clippy::let_unit_value)]
+    #[allow(clippy::zst_offset)]
+    #[allow(clippy::transmute_undefined_repr)]
+    fn build<G>(count: u32, producer: G) -> ::std::boxed::Box<Self>
+    where
+        G: NumberProducer + Sized,
+    {
+        let args = (count, producer);
+        {
+            ::std::io::_print(format_args!("HELLO\n"));
+        };
+        let s = args.1;
+        let trait_object: &dyn NumberProducer = &s;
+        let (_, vtable): (*const G, *const ()) = unsafe {
+            ::core::mem::transmute(trait_object)
+        };
+        let buffer = ::core::mem::MaybeUninit::<[(u32,); 32]>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((
+                &raw const buffer,
+                vtable,
+            ));
+            let tail_ptr = &raw const (*head_ptr).producer;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr),
+            )
+        };
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        let layout = layout
+            .extend(::core::alloc::Layout::new::<G>())
+            .expect("Struct exceeds maximum size allowed of isize::MAX")
+            .0;
+        let layout = layout.pad_to_align();
+        unsafe {
+            if layout.size() == 0 {
+                let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut (), usize),
+                    *mut Self,
+                >((mem_ptr, 0));
+                ::std::boxed::Box::from_raw(fat_ptr)
+            } else {
+                let mem_ptr = ::std::alloc::alloc(layout);
+                if mem_ptr.is_null() {
+                    ::std::alloc::handle_alloc_error(layout)
+                }
+                let fat_ptr = ::core::mem::transmute::<
+                    (*mut u8, *const ()),
+                    *mut Self,
+                >((mem_ptr, vtable));
+                if true {
+                    match (&::core::alloc::Layout::for_value(&*fat_ptr), &layout) {
+                        (left_val, right_val) => {
+                            if !(*left_val == *right_val) {
+                                let kind = ::core::panicking::AssertKind::Eq;
+                                ::core::panicking::assert_failed(
+                                    kind,
+                                    &*left_val,
+                                    &*right_val,
+                                    ::core::option::Option::None,
+                                );
+                            }
+                        }
+                    };
+                }
+                ::core::ptr::write(&mut ((*fat_ptr).count), args.0);
+                let tail_ptr = (&raw mut (*fat_ptr).producer).cast::<G>();
+                ::core::ptr::copy_nonoverlapping(&raw const s, tail_ptr, 1);
+                ::std::boxed::Box::from_raw(fat_ptr)
+            }
+        }
+    }
+}
+extern crate test;
+#[rustc_test_marker = "test_dst_with_trait_object"]
+#[doc(hidden)]
+pub const test_dst_with_trait_object: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_dst_with_trait_object"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 352usize,
+        start_col: 4usize,
+        end_line: 352usize,
+        end_col: 30usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_dst_with_trait_object()),
+    ),
+};
+fn test_dst_with_trait_object() {
+    let a = Node::build(33, FortyTwoProducer {});
+    match (&42, &a.producer.get_number()) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+    let b = Node::build(33, TenProducer {});
+    match (&10, &b.producer.get_number()) {
+        (left_val, right_val) => {
+            if !(*left_val == *right_val) {
+                let kind = ::core::panicking::AssertKind::Eq;
+                ::core::panicking::assert_failed(
+                    kind,
+                    &*left_val,
+                    &*right_val,
+                    ::core::option::Option::None,
+                );
+            }
+        }
+    };
+}
+extern crate test;
+#[rustc_test_marker = "test_no_std"]
+#[doc(hidden)]
+pub const test_no_std: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_no_std"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 364usize,
+        start_col: 4usize,
+        end_line: 364usize,
+        end_col: 15usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_no_std()),
+    ),
+};
+fn test_no_std() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/no_std.rs");
+}
+extern crate test;
+#[rustc_test_marker = "test_error_paths"]
+#[doc(hidden)]
+pub const test_error_paths: test::TestDescAndFn = test::TestDescAndFn {
+    desc: test::TestDesc {
+        name: test::StaticTestName("test_error_paths"),
+        ignore: false,
+        ignore_message: ::core::option::Option::None,
+        source_file: "tests\\tests.rs",
+        start_line: 371usize,
+        start_col: 4usize,
+        end_line: 371usize,
+        end_col: 20usize,
+        compile_fail: false,
+        no_run: false,
+        should_panic: test::ShouldPanic::No,
+        test_type: test::TestType::IntegrationTest,
+    },
+    testfn: test::StaticTestFn(
+        #[coverage(off)]
+        || test::assert_test_result(test_error_paths()),
+    ),
+};
+fn test_error_paths() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/string_in_attribute.rs");
+    t.compile_fail("tests/ui/struct_with_no_fields.rs");
+    t.compile_fail("tests/ui/last_field_not_slice_or_str.rs");
+    t.compile_fail("tests/ui/macro_not_on_struct.rs");
+    t.compile_fail("tests/ui/unnamed_fields.rs");
+    t.compile_fail("tests/ui/dst_field_not_last.rs");
+    t.compile_fail("tests/ui/too_many_tokens.rs");
+    t.compile_fail("tests/ui/bad_visibility.rs");
+    t.compile_fail("tests/ui/no_comma_after_visibility.rs");
+    t.compile_fail("tests/ui/need_no_std.rs");
+    t.compile_fail("tests/ui/bad_str.rs");
+    t.compile_fail("tests/ui/higher_rank_trait.rs");
+}
+#[rustc_main]
+#[coverage(off)]
+#[doc(hidden)]
+pub fn main() -> () {
+    extern crate test;
+    test::test_main_static(
+        &[
+            &test_basic_slice_usage,
+            &test_basic_str_usage,
+            &test_build_with_too_few_items,
+            &test_build_with_too_many_items,
+            &test_complex_fields_before_dst,
+            &test_crate_builder,
+            &test_default_builder_name,
+            &test_dst_with_trait_object,
+            &test_empty_dst_slice_data,
+            &test_empty_dst_str_data,
+            &test_error_paths,
+            &test_generic_const_dst,
+            &test_generic_lifetime_str_dst,
+            &test_interaction_from_iter_derives,
+            &test_long_form_str_usage,
+            &test_no_std,
+            &test_only_slice_dst_field,
+            &test_only_str_dst_field,
+            &test_public_builder,
+            &test_struct_from_iter_where_clause,
+            &test_zst_slice_dst,
+        ],
+    )
+}

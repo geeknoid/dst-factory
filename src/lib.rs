@@ -177,20 +177,21 @@ mod macro_args;
 use macro_args::MacroArgs;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
+use std::iter::once;
 use syn::token::Where;
 use syn::{
-    Field, Fields, Generics, Ident, Index, ItemStruct, Type, TypePath, TypeSlice, TypeTraitObject,
+    Field, Fields, Generics, Ident, Index, ItemStruct, Type, TypePath, TypeTraitObject,
     parse::Result as SynResult, punctuated::Punctuated, spanned::Spanned,
 };
 
 enum TailKind {
-    Slice(TypeSlice),
+    Slice(Box<Type>),
     Str,
     TraitObject(TypeTraitObject),
 }
 
 struct StructInfo<'a> {
-    struct_name_ident: &'a Ident,
+    struct_name: &'a Ident,
     struct_generics: &'a Generics,
     header_fields: Box<[&'a Field]>,
     header_field_idents: Box<[&'a Ident]>,
@@ -224,7 +225,7 @@ impl StructInfo<'_> {
                     Type::TraitObject(trait_object) => {
                         tail_kind = TailKind::TraitObject(trait_object.clone());
                     }
-                    Type::Slice(type_slice) => tail_kind = TailKind::Slice(type_slice.clone()),
+                    Type::Slice(type_slice) => tail_kind = TailKind::Slice(type_slice.elem.clone()),
 
                     _ => {
                         return Err(syn::Error::new_spanned(
@@ -248,7 +249,7 @@ impl StructInfo<'_> {
                 let tail_field = named_fields.named.last().unwrap();
 
                 Ok(StructInfo {
-                    struct_name_ident: &input_struct.ident,
+                    struct_name: &input_struct.ident,
                     struct_generics: &input_struct.generics,
                     header_fields: header_fields.into_boxed_slice(),
                     header_field_idents: header_field_idents.into_boxed_slice(),
@@ -266,13 +267,72 @@ impl StructInfo<'_> {
     }
 }
 
-fn generate_header_layout_tokens(header_fields: &[&Field]) -> TokenStream {
+/*
+use std::alloc::Layout;
+use std::mem::MaybeUninit;
+
+pub struct MyThing {
+    pub a: u32,
+    pub b: u8,
+    pub c: [u16],
+}
+
+pub const LAYOUT_TO_C: Layout = unsafe {
+    struct JustNeedsToBeEnoughForTheOffsetting([(u32, u8, u16); 2]);
+    let whatever = MaybeUninit::<JustNeedsToBeEnoughForTheOffsetting>::uninit();
+    let p: *const MyThing = std::mem::transmute((&raw const whatever, 0_usize));
+    let q: *const [u16] = &raw const (*p).c;
+    let offset = (q as *const u8).offset_from_unsigned(p as *const u8);
+    let align = std::mem::align_of_val::<MyThing>(&*p);
+    let Ok(l) = Layout::from_size_align(offset, align) else { unreachable!() };
+    l
+};
+*/
+
+fn header_layout(struct_info: &StructInfo, for_trait: bool) -> TokenStream {
+    /*
+        let tail_field_ident = struct_info.tail_field_ident;
+
+        let header_field_types: Vec<_> = struct_info
+            .header_fields
+            .iter()
+            .map(|field| &field.ty)
+            .collect();
+
+        if header_field_types.is_empty() {
+            return quote! {
+                let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
+            };
+        }
+
+        let fat_payload = if for_trait {
+            quote! { vtable }
+        } else {
+            quote! { 0_usize }
+        };
+
+        quote! {
+            let buffer = ::core::mem::MaybeUninit::<[(#( #header_field_types, )*); 32]>::uninit();
+            let (offset, align) = unsafe {
+                let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, #fat_payload));
+                let tail_ptr = &raw const (*head_ptr).#tail_field_ident;
+                (
+                    (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                    ::core::mem::align_of_val::<Self>(&*head_ptr)
+                )
+            };
+
+            let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+        }
+    */
+
+    let _ = for_trait;
     let mut header_layout_tokens = quote! {
         let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
     };
 
     // Extend layout for each field.
-    for field in header_fields {
+    for field in &struct_info.header_fields {
         let field_ty = &field.ty;
         let field_span = field_ty.span();
         header_layout_tokens.extend(quote_spanned! {field_span =>
@@ -283,11 +343,11 @@ fn generate_header_layout_tokens(header_fields: &[&Field]) -> TokenStream {
     header_layout_tokens
 }
 
-fn generate_tail_layout_tokens<T: quote::ToTokens>(tail_type: &T, span: Span) -> TokenStream {
+fn tail_layout<T: quote::ToTokens>(tail_type: &T, span: Span) -> TokenStream {
     quote_spanned! { span => ::core::alloc::Layout::array::<#tail_type>(len).expect("Array exceeds maximum size allowed of isize::MAX") }
 }
 
-fn generate_guard_type(macro_args: &MacroArgs) -> TokenStream {
+fn guard_type(macro_args: &MacroArgs) -> TokenStream {
     let dealloc_path = if macro_args.no_std {
         quote! { ::alloc::alloc::dealloc }
     } else {
@@ -314,36 +374,42 @@ fn generate_guard_type(macro_args: &MacroArgs) -> TokenStream {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn generate_factory_common(
-    macro_args: &MacroArgs,
-    struct_info: &StructInfo<'_>,
-    factory_name_ident: &Ident,
-    factory_doc_string: &String,
-    factory_generics_tokens: Option<&TokenStream>,
-    factory_where_clause_tokens: Option<&TokenStream>,
-    guard_type_tokens: Option<&TokenStream>,
-    args_tuple_ident: &Ident,
-    header_layout_tokens: &TokenStream,
-    tail_param_tokens: &TokenStream,
-    tail_layout_tokens: &TokenStream,
-    tail_processing_tokens: &TokenStream,
-    tail_write_tokens: &TokenStream,
-    fat_ptr_tokens: &TokenStream,
-) -> TokenStream {
-    let MacroArgs {
-        visibility: factory_visibility,
-        no_std,
-        ..
-    } = macro_args;
+fn header_params(struct_info: &StructInfo) -> Vec<TokenStream> {
+    let mut header_params_tokens = Vec::new();
+    for field in &struct_info.header_fields {
+        let field_ident = field.ident.as_ref().unwrap();
+        let field_ty = &field.ty;
+        header_params_tokens.push(quote! { #field_ident: #field_ty });
+    }
+    header_params_tokens
+}
 
-    let StructInfo {
-        header_field_idents,
-        tail_field_ident,
-        ..
-    } = struct_info;
+fn header_field_writes(struct_info: &StructInfo) -> Vec<TokenStream> {
+    struct_info
+        .header_field_idents
+        .iter()
+        .enumerate()
+        .map(|(idx, field_ident_on_struct)| {
+            let tuple_idx = syn::Index::from(idx);
+            quote! { ::core::ptr::write(&mut ((*fat_ptr).#field_ident_on_struct), args.#tuple_idx);}
+        })
+        .collect()
+}
 
-    let (box_path, alloc_path, handle_alloc_error) = if *no_std {
+fn args_tuple_assignment(struct_info: &StructInfo) -> TokenStream {
+    let tuple_elements_for_assignment = &struct_info
+        .header_field_idents
+        .iter()
+        .chain(once(&struct_info.tail_field_ident))
+        .collect::<Vec<_>>();
+
+    quote! {
+        let args = ( #( #tuple_elements_for_assignment, )* );
+    }
+}
+
+fn alloc_funcs(no_std: bool) -> (TokenStream, TokenStream, TokenStream) {
+    if no_std {
         (
             quote! { ::alloc::boxed::Box },
             quote! { ::alloc::alloc::alloc },
@@ -355,103 +421,28 @@ fn generate_factory_common(
             quote! { ::std::alloc::alloc },
             quote! { ::std::alloc::handle_alloc_error(layout) },
         )
-    };
-
-    let tuple_elements_for_assignment = header_field_idents
-        .iter()
-        .map(|ident| quote! { #ident })
-        .chain(std::iter::once(quote! { #tail_field_ident }))
-        .collect::<Vec<_>>();
-
-    let tuple_assignment = quote! {
-        let #args_tuple_ident = ( #( #tuple_elements_for_assignment, )* );
-    };
-
-    let header_field_writes =
-        header_field_idents
-            .iter()
-            .enumerate()
-            .map(|(idx, field_ident_on_struct)| {
-                let tuple_idx = syn::Index::from(idx);
-                quote! { ::core::ptr::write(&mut ((*fat_ptr).#field_ident_on_struct), #args_tuple_ident.#tuple_idx);}
-            });
-
-    let mut header_params_tokens = Vec::new();
-    for field in &struct_info.header_fields {
-        let field_ident = field.ident.as_ref().unwrap();
-        let field_ty = &field.ty;
-        header_params_tokens.push(quote! { #field_ident: #field_ty });
-    }
-
-    quote! {
-        #[doc = #factory_doc_string]
-        #[allow(clippy::let_unit_value)]
-        #[allow(clippy::zst_offset)]
-        #[allow(clippy::transmute_undefined_repr)]
-        #factory_visibility fn #factory_name_ident #factory_generics_tokens (
-            #( #header_params_tokens, )*
-            #tail_param_tokens
-        ) -> #box_path<Self> #factory_where_clause_tokens {
-            #guard_type_tokens
-
-            // Assign the args to a tuple with a unique name to avoid conflicts with arg names in the
-            // rest of this function
-            #tuple_assignment
-
-            #tail_processing_tokens
-
-            // Calculate the total size of the struct, including the header and tail fields
-            #header_layout_tokens
-            let layout = layout.extend(#tail_layout_tokens).expect("Struct exceeds maximum size allowed of isize::MAX").0;
-            let layout = layout.pad_to_align();
-
-            unsafe {
-                if layout.size() == 0 {
-                    // Handle ZST case
-                    let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
-                    let fat_ptr = ::core::mem::transmute::<(*mut (), usize), *mut Self>((mem_ptr, 0));
-                    #box_path::from_raw(fat_ptr)
-                } else {
-                    let mem_ptr = #alloc_path(layout);
-                    if mem_ptr.is_null() {
-                        #handle_alloc_error
-                    }
-
-                    #fat_ptr_tokens
-
-                    #( #header_field_writes )*
-
-                    #tail_write_tokens
-
-                    ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
-                    #box_path::from_raw(fat_ptr)
-                }
-            }
-        }
     }
 }
 
-fn generate_factory_for_slice_arg(
+fn alloc_zst(box_path: &TokenStream) -> TokenStream {
+    quote! {
+         // Handle ZST case
+        let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
+        let fat_ptr = ::core::mem::transmute::<(*mut (), usize), *mut Self>((mem_ptr, 0));
+        #box_path::from_raw(fat_ptr)
+    }
+}
+
+fn factory_for_slice_arg(
     macro_args: &MacroArgs,
     struct_info: &StructInfo,
-    header_layout_tokens: &TokenStream,
-    args_tuple_ident: &Ident,
-    tail_param_tuple_idx: &Index,
-    tail_type: &Type,
+    tail_elem_type: &Type,
 ) -> TokenStream {
-    let struct_name_ident = &struct_info.struct_name_ident;
-    let factory_name_ident = format_ident!("{}_from_slice", &macro_args.base_factory_name);
-    let factory_doc_string =
-        format!("Creates an instance of `Box<{struct_name_ident}>` from a slice.");
-
-    let tail_field_ident = &struct_info.tail_field_ident;
-    let tail_param_tokens = quote! { #tail_field_ident: &[#tail_type] };
-
-    let copy_bound_tokens: syn::WherePredicate = syn::parse_quote_spanned! {tail_type.span()=>
-        #tail_type: ::core::marker::Copy
+    let copy_bound_tokens: syn::WherePredicate = syn::parse_quote_spanned! {tail_elem_type.span()=>
+        #tail_elem_type: ::core::marker::Copy
     };
 
-    let mut final_where_clause = struct_info
+    let mut factory_where_clause = struct_info
         .struct_generics
         .where_clause
         .clone()
@@ -460,180 +451,227 @@ fn generate_factory_for_slice_arg(
             predicates: Punctuated::new(),
         });
 
-    final_where_clause.predicates.push(copy_bound_tokens);
+    factory_where_clause.predicates.push(copy_bound_tokens);
 
-    let factory_where_clause_tokens = Some(quote! { #final_where_clause });
+    let (box_path, alloc_path, handle_alloc_error) = alloc_funcs(macro_args.no_std);
+    let make_zst = alloc_zst(&box_path);
 
-    let tail_processing_tokens = quote! {
-        let s = #args_tuple_ident.#tail_param_tuple_idx.as_ref();
-        let len = s.len();
-    };
+    let tail_layout = tail_layout(tail_elem_type, struct_info.tail_field.ty.span());
+    let header_layout = header_layout(struct_info, false);
+    let tuple_assignment = args_tuple_assignment(struct_info);
+    let header_field_writes = header_field_writes(struct_info);
+    let header_params = header_params(struct_info);
 
-    let tail_layout_tokens =
-        generate_tail_layout_tokens(tail_type, struct_info.tail_field.ty.span());
+    let factory_name = format_ident!("{}_from_slice", &macro_args.base_factory_name);
+    let visibility = &macro_args.visibility;
 
-    let tail_write_tokens = quote_spanned! {tail_type.span()=>
-        // Copy the slice content into the tail field
-        let tail_ptr = (&raw mut (*fat_ptr).#tail_field_ident).cast::<#tail_type>();
-        ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
-    };
+    let tail_field = &struct_info.tail_field_ident;
+    let struct_name = &struct_info.struct_name;
+    let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
 
-    let fat_ptr_tokens = quote! {
-        let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
-    };
+    let factory_doc = format!("Creates an instance of `Box<{struct_name}>`.");
 
-    generate_factory_common(
-        macro_args,
-        struct_info,
-        &factory_name_ident,
-        &factory_doc_string,
-        None, // factory_generics_tokens
-        factory_where_clause_tokens.as_ref(),
-        None,
-        args_tuple_ident,
-        header_layout_tokens,
-        &tail_param_tokens,
-        &tail_layout_tokens,
-        &tail_processing_tokens,
-        &tail_write_tokens,
-        &fat_ptr_tokens,
-    )
+    quote! {
+        #[doc = #factory_doc]
+        #[allow(clippy::let_unit_value)]
+        #[allow(clippy::zst_offset)]
+        #[allow(clippy::transmute_undefined_repr)]
+        #visibility fn #factory_name (
+            #( #header_params, )*
+            #tail_field: &[#tail_elem_type]
+        ) -> #box_path<Self> #factory_where_clause {
+            #tuple_assignment
+
+            let s = args.#tail_args_tuple_idx.as_ref();
+            let len = s.len();
+
+            // Calculate the total size of the struct, including the header and tail fields
+            #header_layout
+            let layout = layout.extend(#tail_layout).expect("Struct exceeds maximum size allowed of isize::MAX").0;
+            let layout = layout.pad_to_align();
+
+            unsafe {
+                if layout.size() == 0 {
+                    #make_zst
+                } else {
+                    let mem_ptr = #alloc_path(layout);
+                    if mem_ptr.is_null() {
+                        #handle_alloc_error
+                    }
+
+                    let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
+                    ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
+
+                    #( #header_field_writes )*
+
+                    // Copy the slice content into the tail field
+                    let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#tail_elem_type>();
+                    ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+
+                    #box_path::from_raw(fat_ptr)
+                }
+            }
+        }
+    }
 }
 
-fn generate_factory_for_iter_arg(
+fn factory_for_iter_arg(
     macro_args: &MacroArgs,
     struct_info: &StructInfo,
-    header_layout_tokens: &TokenStream,
-    args_tuple_ident: &Ident,
-    tail_param_tuple_idx: &Index,
     tail_type: &Type,
 ) -> TokenStream {
-    let struct_name_ident = &struct_info.struct_name_ident;
-    let factory_name_ident = &macro_args.base_factory_name;
-    let factory_doc_string =
-        format!("Creates an instance of `Box<{struct_name_ident}>` from an iterator.");
+    let guard_type_tokens = guard_type(macro_args);
+    let (box_path, alloc_path, handle_alloc_error) = alloc_funcs(macro_args.no_std);
+    let make_zst = alloc_zst(&box_path);
 
-    let iter_generic_param_ident = &macro_args.generic_name;
-    let tail_field_ident = &struct_info.tail_field_ident;
-    let tail_param_tokens = quote! { #tail_field_ident: #iter_generic_param_ident };
-    let factory_generics_tokens = Some(quote! { <#iter_generic_param_ident> });
-    let factory_where_clause_tokens = Some(quote! {
+    let tail_layout = tail_layout(tail_type, struct_info.tail_field.ty.span());
+    let header_layout = header_layout(struct_info, false);
+    let tuple_assignment = args_tuple_assignment(struct_info);
+    let header_field_writes = header_field_writes(struct_info);
+    let header_params = header_params(struct_info);
+
+    let visibility = &macro_args.visibility;
+    let factory_name = &macro_args.base_factory_name;
+    let iter_generic_param = &macro_args.generic_name;
+
+    let tail_field = &struct_info.tail_field_ident;
+    let struct_name = &struct_info.struct_name;
+    let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
+
+    let factory_doc = format!("Creates an instance of `Box<{struct_name}>`.");
+
+    quote! {
+        #[doc = #factory_doc]
+        #[allow(clippy::let_unit_value)]
+        #[allow(clippy::zst_offset)]
+        #[allow(clippy::transmute_undefined_repr)]
+        #visibility fn #factory_name <#iter_generic_param> (
+            #( #header_params, )*
+            #tail_field: #iter_generic_param
+        ) -> #box_path<Self>
         where
-            #iter_generic_param_ident: ::core::iter::IntoIterator<Item = #tail_type>,
-            <#iter_generic_param_ident as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator
-    });
+            #iter_generic_param: ::core::iter::IntoIterator<Item = #tail_type>,
+            <#iter_generic_param as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator
+        {
+            #guard_type_tokens
+            #tuple_assignment
 
-    let tail_processing_tokens = quote! {
-        let iter = #args_tuple_ident.#tail_param_tuple_idx.into_iter();
-        let len = iter.len();
-    };
+            let iter = args.#tail_args_tuple_idx.into_iter();
+            let len = iter.len();
 
-    let tail_layout_tokens =
-        generate_tail_layout_tokens(tail_type, struct_info.tail_field.ty.span());
+            // Calculate the total size of the struct, including the header and tail fields
+            #header_layout
+            let layout = layout.extend(#tail_layout).expect("Struct exceeds maximum size allowed of isize::MAX").0;
+            let layout = layout.pad_to_align();
 
-    let tail_write_tokens = quote! {
-        // Write each element from the iterator into the tail field
-        let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field_ident).cast::<#tail_type>();
-        let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
-        iter.for_each(|element| {
-            if guard.initialized == len {
-                panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
+            unsafe {
+                if layout.size() == 0 {
+                    #make_zst
+                } else {
+                    let mem_ptr = #alloc_path(layout);
+                    if mem_ptr.is_null() {
+                        #handle_alloc_error
+                    }
+
+                    let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
+                    ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
+
+                    #( #header_field_writes )*
+
+                    // Write each element from the iterator into the tail field
+                    let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field).cast::<#tail_type>();
+                    let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
+                    iter.for_each(|element| {
+                        if guard.initialized == len {
+                            panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
+                        }
+
+                        ::core::ptr::write(tail_ptr.add(guard.initialized), element);
+                        guard.initialized += 1;
+                    });
+
+                    if guard.initialized != len {
+                        panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
+                    }
+
+                    ::std::mem::forget(guard);
+
+                    #box_path::from_raw(fat_ptr)
+                }
             }
-
-            ::core::ptr::write(tail_ptr.add(guard.initialized), element);
-            guard.initialized += 1;
-        });
-
-        if guard.initialized != len {
-            panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
         }
-
-        ::std::mem::forget(guard);
-    };
-
-    let fat_ptr_tokens = quote! {
-        let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
-    };
-
-    generate_factory_common(
-        macro_args,
-        struct_info,
-        factory_name_ident,
-        &factory_doc_string,
-        factory_generics_tokens.as_ref(),
-        factory_where_clause_tokens.as_ref(),
-        Some(&generate_guard_type(macro_args)),
-        args_tuple_ident,
-        header_layout_tokens,
-        &tail_param_tokens,
-        &tail_layout_tokens,
-        &tail_processing_tokens,
-        &tail_write_tokens,
-        &fat_ptr_tokens,
-    )
+    }
 }
 
-fn generate_factory_for_str_arg(
-    macro_args: &MacroArgs,
-    struct_info: &StructInfo,
-    header_layout_tokens: &TokenStream,
-    args_tuple_ident: &Ident,
-    tail_param_tuple_idx: &Index,
-) -> TokenStream {
-    let struct_name_ident = &struct_info.struct_name_ident;
-    let factory_name_ident = &macro_args.base_factory_name;
-    let factory_doc_string =
-        format!("Creates an instance of `Box<{struct_name_ident}>` from a string slice.");
+fn factory_for_str_arg(macro_args: &MacroArgs, struct_info: &StructInfo) -> TokenStream {
+    let (box_path, alloc_path, handle_alloc_error) = alloc_funcs(macro_args.no_std);
+    let make_zst = alloc_zst(&box_path);
 
-    let tail_field_ident = &struct_info.tail_field_ident;
-    let tail_param_tokens = quote! { #tail_field_ident: impl ::core::convert::AsRef<str> };
+    let tail_layout = tail_layout(&quote! { u8 }, struct_info.tail_field.ty.span());
+    let header_layout = header_layout(struct_info, false);
+    let tuple_assignment = args_tuple_assignment(struct_info);
+    let header_field_writes = header_field_writes(struct_info);
+    let header_params = header_params(struct_info);
 
+    let factory_name = &macro_args.base_factory_name;
+    let visibility = &macro_args.visibility;
+
+    let struct_name = &struct_info.struct_name;
+    let tail_field = &struct_info.tail_field_ident;
     let tail_type = &struct_info.tail_field.ty;
-    let tail_processing_tokens = quote! {
-        // Ensure the tail type is an actual string
-        ::core::assert_eq!(::core::any::TypeId::of::<#tail_type>(), ::core::any::TypeId::of::<str>());
-        let s = #args_tuple_ident.#tail_param_tuple_idx.as_ref();
-        let len = s.len();
-    };
+    let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
 
-    let tail_layout_tokens =
-        generate_tail_layout_tokens(&quote! { u8 }, struct_info.tail_field.ty.span());
+    let factory_doc = format!("Creates an instance of `Box<{struct_name}>`.");
 
-    let tail_write_tokens = quote! {
-        // copy the string data into the tail field
-        let tail_ptr = (&raw mut (*fat_ptr).#tail_field_ident).cast::<u8>();
-        ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
-    };
+    quote! {
+        #[doc = #factory_doc]
+        #[allow(clippy::let_unit_value)]
+        #[allow(clippy::zst_offset)]
+        #[allow(clippy::transmute_undefined_repr)]
+        #visibility fn #factory_name(
+            #( #header_params, )*
+            #tail_field: impl ::core::convert::AsRef<str>
+        ) -> #box_path<Self> {
+            #tuple_assignment
 
-    let fat_ptr_tokens = quote! {
-        let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
-    };
+            ::core::assert_eq!(::core::any::TypeId::of::<#tail_type>(), ::core::any::TypeId::of::<str>());
+            let s = args.#tail_args_tuple_idx.as_ref();
+            let len = s.len();
 
-    generate_factory_common(
-        macro_args,
-        struct_info,
-        factory_name_ident,
-        &factory_doc_string,
-        None, // factory_generics_tokens
-        None, // factory_where_clause_tokens
-        None, // guard_type_tokens
-        args_tuple_ident,
-        header_layout_tokens,
-        &tail_param_tokens,
-        &tail_layout_tokens, // factory_where_clause_tokens
-        &tail_processing_tokens,
-        &tail_write_tokens,
-        &fat_ptr_tokens,
-    )
+            // Calculate the total size of the struct, including the header and tail fields
+            #header_layout
+            let layout = layout.extend(#tail_layout).expect("Struct exceeds maximum size allowed of isize::MAX").0;
+            let layout = layout.pad_to_align();
+
+            unsafe {
+                if layout.size() == 0 {
+                    #make_zst
+                } else {
+                    let mem_ptr = #alloc_path(layout);
+                    if mem_ptr.is_null() {
+                        #handle_alloc_error
+                    }
+
+                    let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
+                    ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
+
+                    #( #header_field_writes )*
+
+                    // copy the string data into the tail field
+                    let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<u8>();
+                    ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+
+                    #box_path::from_raw(fat_ptr)
+                }
+            }
+        }
+    }
 }
 
-fn generate_factory_for_trait_arg(
+fn factory_for_trait_arg(
     macro_args: &MacroArgs,
     struct_info: &StructInfo,
     type_trait_object: &TypeTraitObject,
-    args_tuple_ident: &Ident,
-    header_layout_tokens: &TokenStream,
-    tail_param_tuple_idx: &Index,
 ) -> SynResult<TokenStream> {
     // Verify that the trait object is not a higher-rank trait bound
     for bound in &type_trait_object.bounds {
@@ -660,51 +698,71 @@ fn generate_factory_for_trait_arg(
         })
         .unwrap();
 
-    let factory_name_ident = &macro_args.base_factory_name;
-    let factory_doc_string = format!(
-        "Builds an instance of `Box<{}>`.",
-        struct_info.struct_name_ident,
-    );
+    let (box_path, alloc_path, handle_alloc_error) = alloc_funcs(macro_args.no_std);
+    let make_zst = alloc_zst(&box_path);
 
+    let header_layout = header_layout(struct_info, true);
+    let tuple_assignment = args_tuple_assignment(struct_info);
+    let header_field_writes = header_field_writes(struct_info);
+    let header_params = header_params(struct_info);
+
+    let factory_name = &macro_args.base_factory_name;
     let trait_generic = &macro_args.generic_name;
-    let factory_generics_tokens = Some(quote! { <#trait_generic> });
-    let factory_where_clause_tokens = Some(quote! { where #trait_generic: #trait_path + Sized });
-    let tail_field_ident = &struct_info.tail_field_ident;
-    let tail_param_tokens = quote! { #tail_field_ident: #trait_generic };
-    let tail_layout_tokens = quote! { ::core::alloc::Layout::new::<#trait_generic>() };
+    let visibility = &macro_args.visibility;
 
-    let tail_processing_tokens = quote! {
-        let s = #args_tuple_ident.#tail_param_tuple_idx;
-        let trait_object: &dyn #trait_path = &s;
-        let (_, vtable): (*const #trait_generic, *const ()) = unsafe { ::core::mem::transmute(trait_object) };
-    };
+    let struct_name = &struct_info.struct_name;
+    let tail_field = &struct_info.tail_field_ident;
+    let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
 
-    let tail_write_tokens = quote! {
-        // copy the instance data into the tail field
-        let tail_ptr = (&raw mut (*fat_ptr).#tail_field_ident).cast::<#trait_generic>();
-        ::core::ptr::copy_nonoverlapping(::core::ptr::addr_of!(s), tail_ptr, 1);
-    };
+    let factory_doc = format!("Builds an instance of `Box<{struct_name}>`.");
 
-    let fat_ptr_tokens = quote! {
-        let fat_ptr = ::core::mem::transmute::<(*mut u8, *const ()), *mut Self>((mem_ptr, vtable));
-    };
+    Ok(quote! {
+        #[doc = #factory_doc]
+        #[allow(clippy::let_unit_value)]
+        #[allow(clippy::zst_offset)]
+        #[allow(clippy::transmute_undefined_repr)]
+        #visibility fn #factory_name <#trait_generic> (
+            #( #header_params, )*
+            #tail_field: #trait_generic
+        ) -> #box_path<Self>
+        where
+            #trait_generic: #trait_path + Sized
+        {
+            #tuple_assignment
 
-    Ok(generate_factory_common(
-        macro_args,
-        struct_info,
-        factory_name_ident, // This is the Ident for the factory function name
-        &factory_doc_string,
-        factory_generics_tokens.as_ref(),
-        factory_where_clause_tokens.as_ref(),
-        None, // guard_type_tokens
-        args_tuple_ident,
-        header_layout_tokens,
-        &tail_param_tokens,
-        &tail_layout_tokens,
-        &tail_processing_tokens,
-        &tail_write_tokens,
-        &fat_ptr_tokens,
-    ))
+            println!("HELLO");
+
+            let s = args.#tail_args_tuple_idx;
+            let trait_object: &dyn #trait_path = &s;
+            let (_, vtable): (*const #trait_generic, *const ()) = unsafe { ::core::mem::transmute(trait_object) };
+
+            // Calculate the total size of the struct, including the header and tail fields
+            #header_layout
+            let layout = layout.extend(::core::alloc::Layout::new::<#trait_generic>()).expect("Struct exceeds maximum size allowed of isize::MAX").0;
+            let layout = layout.pad_to_align();
+
+            unsafe {
+                if layout.size() == 0 {
+                    #make_zst
+                } else {
+                    let mem_ptr = #alloc_path(layout);
+                    if mem_ptr.is_null() {
+                        #handle_alloc_error
+                    }
+
+                    let fat_ptr = ::core::mem::transmute::<(*mut u8, *const ()), *mut Self>((mem_ptr, vtable));
+                    ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
+
+                    #( #header_field_writes )*
+
+                    let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#trait_generic>();
+                    ::core::ptr::copy_nonoverlapping(::core::ptr::addr_of!(s), tail_ptr, 1);
+
+                    #box_path::from_raw(fat_ptr)
+                }
+            }
+        }
+    })
 }
 
 fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult<TokenStream> {
@@ -713,57 +771,29 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 
     let struct_info = StructInfo::new(&input_struct)?;
     let (impl_generics, ty_generics, where_clause) = struct_info.struct_generics.split_for_impl();
-    let header_layout_tokens = generate_header_layout_tokens(&struct_info.header_fields);
     let mut generated_factories = Vec::new();
 
-    let args_tuple_ident = format_ident!("args");
-    let num_header_fields = struct_info.header_field_idents.len();
-    let tail_param_tuple_idx = syn::Index::from(num_header_fields);
-
     match &struct_info.tail_kind {
-        TailKind::Slice(type_slice) => {
-            generated_factories.push(generate_factory_for_slice_arg(
-                &macro_args,
-                &struct_info,
-                &header_layout_tokens,
-                &args_tuple_ident,
-                &tail_param_tuple_idx,
-                &type_slice.elem,
-            ));
+        TailKind::Slice(elem_type) => {
+            generated_factories.push(factory_for_slice_arg(&macro_args, &struct_info, elem_type));
 
-            generated_factories.push(generate_factory_for_iter_arg(
-                &macro_args,
-                &struct_info,
-                &header_layout_tokens,
-                &args_tuple_ident,
-                &tail_param_tuple_idx,
-                &type_slice.elem,
-            ));
+            generated_factories.push(factory_for_iter_arg(&macro_args, &struct_info, elem_type));
         }
 
         TailKind::Str => {
-            generated_factories.push(generate_factory_for_str_arg(
-                &macro_args,
-                &struct_info,
-                &header_layout_tokens,
-                &args_tuple_ident,
-                &tail_param_tuple_idx,
-            ));
+            generated_factories.push(factory_for_str_arg(&macro_args, &struct_info));
         }
 
         TailKind::TraitObject(type_trait_object) => {
-            generated_factories.push(generate_factory_for_trait_arg(
+            generated_factories.push(factory_for_trait_arg(
                 &macro_args,
                 &struct_info,
                 type_trait_object,
-                &args_tuple_ident,
-                &header_layout_tokens,
-                &tail_param_tuple_idx,
             )?);
         }
     }
 
-    let struct_name_ident = struct_info.struct_name_ident;
+    let struct_name_ident = struct_info.struct_name;
     Ok(quote! {
         #[repr(C)]
         #input_struct
