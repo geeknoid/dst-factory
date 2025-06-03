@@ -2,6 +2,7 @@
 
 use dst_factory::make_dst_factory;
 use std::fmt::Debug;
+use std::ptr::read_unaligned;
 
 #[make_dst_factory(basic_str_builder)]
 struct BasicStrStruct {
@@ -358,6 +359,46 @@ fn dst_with_trait_object() {
     let b = Node::build(33, TenProducer {});
     assert_eq!(10, b.producer.get_number());
 }
+
+#[make_dst_factory]
+#[repr(Rust, packed(1))]
+struct PackedStruct {
+    data: u32,
+    tail: str
+}
+
+#[test]
+fn packed_struct() {
+    let instance: Box<PackedStruct> = PackedStruct::build(0xDEAD_BEEF, "packed data");
+
+    let data = unsafe { read_unaligned(&raw const instance.data) };
+
+    assert_eq!(data, 0xDEAD_BEEF);
+    assert_eq!(&instance.tail, "packed data");
+}
+
+/*
+
+#[make_dst_factory]
+struct AlignedSliceStruct<T> {
+    data: u32,
+    tail: [T]
+}
+
+#[repr(align(32))]
+#[derive(Debug, Eq, PartialEq)]
+struct Align32 {
+    payload: u32,
+}
+
+#[test]
+fn aligned_slice_struct() {
+    let instance: Box<AlignedSliceStruct<Align32>> = AlignedSliceStruct::build(42, [Align32 { payload: 0xDEAD_BEEF }]);
+
+    assert_eq!(instance.data, 42);
+    assert_eq!(instance.tail[0], Align32 { payload: 0xDEA_DBEEF });
+}
+*/
 
 #[test]
 #[cfg_attr(miri, ignore)]

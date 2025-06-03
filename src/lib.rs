@@ -369,7 +369,7 @@ fn header_field_writes(struct_info: &StructInfo) -> Vec<TokenStream> {
         .enumerate()
         .map(|(idx, field_ident_on_struct)| {
             let tuple_idx = syn::Index::from(idx);
-            quote! { ::core::ptr::write(&mut ((*fat_ptr).#field_ident_on_struct), args.#tuple_idx);}
+            quote! { ::core::ptr::write_unaligned(&raw mut ((*fat_ptr).#field_ident_on_struct), args.#tuple_idx);}
         })
         .collect()
 }
