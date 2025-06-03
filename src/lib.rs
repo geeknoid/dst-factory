@@ -267,7 +267,7 @@ impl StructInfo<'_> {
     }
 }
 
-fn header_layout(struct_info: &StructInfo, for_trait: bool) -> TokenStream {
+fn header_layout(macro_args: &MacroArgs, struct_info: &StructInfo, for_trait: bool) -> TokenStream {
     let tail_field_ident = struct_info.tail_field_ident;
 
     let header_field_types: Vec<_> = struct_info
@@ -288,8 +288,17 @@ fn header_layout(struct_info: &StructInfo, for_trait: bool) -> TokenStream {
         quote! { 0_usize }
     };
 
+    let tail_type = match &struct_info.tail_kind {
+        TailKind::Slice(elem_type) => quote! { #elem_type },
+        TailKind::Str => quote! { u8 },
+        TailKind::TraitObject(_) => {
+            let generic_name = &macro_args.generic_name;
+            quote! { #generic_name }
+        },
+    };
+
     quote! {
-        let buffer = ::core::mem::MaybeUninit::<(#( #header_field_types, )*)>::uninit();
+        let buffer = ::core::mem::MaybeUninit::<(#( #header_field_types, )* #tail_type)>::uninit();
         let (offset, align) = unsafe {
             let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, #fat_payload));
             let tail_ptr = &raw const (*head_ptr).#tail_field_ident;
@@ -444,7 +453,7 @@ fn factory_for_slice_arg(
     let make_zst = alloc_zst(&box_path, false);
 
     let tail_layout = tail_layout(tail_elem_type, struct_info.tail_field.ty.span());
-    let header_layout = header_layout(struct_info, false);
+    let header_layout = header_layout(macro_args, struct_info, false);
     let tuple_assignment = args_tuple_assignment(struct_info);
     let header_field_writes = header_field_writes(struct_info);
     let header_params = header_params(struct_info);
@@ -511,7 +520,7 @@ fn factory_for_iter_arg(
     let make_zst = alloc_zst(&box_path, false);
 
     let tail_layout = tail_layout(tail_type, struct_info.tail_field.ty.span());
-    let header_layout = header_layout(struct_info, false);
+    let header_layout = header_layout(macro_args, struct_info, false);
     let tuple_assignment = args_tuple_assignment(struct_info);
     let header_field_writes = header_field_writes(struct_info);
     let header_params = header_params(struct_info);
@@ -593,7 +602,7 @@ fn factory_for_str_arg(macro_args: &MacroArgs, struct_info: &StructInfo) -> Toke
     let make_zst = alloc_zst(&box_path, false);
 
     let tail_layout = tail_layout(&quote! { u8 }, struct_info.tail_field.ty.span());
-    let header_layout = header_layout(struct_info, false);
+    let header_layout = header_layout(macro_args, struct_info, false);
     let tuple_assignment = args_tuple_assignment(struct_info);
     let header_field_writes = header_field_writes(struct_info);
     let header_params = header_params(struct_info);
@@ -685,7 +694,7 @@ fn factory_for_trait_arg(
     let (box_path, alloc_path, handle_alloc_error) = alloc_funcs(macro_args.no_std);
     let make_zst = alloc_zst(&box_path, true);
 
-    let header_layout = header_layout(struct_info, true);
+    let header_layout = header_layout(macro_args, struct_info, true);
     let tuple_assignment = args_tuple_assignment(struct_info);
     let header_field_writes = header_field_writes(struct_info);
     let header_params = header_params(struct_info);

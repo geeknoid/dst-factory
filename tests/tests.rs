@@ -377,8 +377,6 @@ fn packed_struct() {
     assert_eq!(&instance.tail, "packed data");
 }
 
-/*
-
 #[make_dst_factory]
 struct AlignedSliceStruct<T> {
     data: u32,
@@ -398,7 +396,31 @@ fn aligned_slice_struct() {
     assert_eq!(instance.data, 42);
     assert_eq!(instance.tail[0], Align32 { payload: 0xDEA_DBEEF });
 }
-*/
+
+#[make_dst_factory]
+struct AlignedTraitStruct {
+    data: u32,
+    tail: dyn NumberProducer,
+}
+
+#[repr(align(32))]
+struct HundredProducer {
+    payload: u32,
+}
+
+impl NumberProducer for HundredProducer {
+    fn get_number(&self) -> u32 {
+        self.payload
+    }
+}
+
+#[test]
+fn aligned_trait_struct() {
+    let instance: Box<AlignedTraitStruct> = AlignedTraitStruct::build(42, HundredProducer{ payload: 100 });
+
+    assert_eq!(instance.data, 42);
+    assert_eq!(instance.tail.get_number(), 100);
+}
 
 #[test]
 #[cfg_attr(miri, ignore)]
