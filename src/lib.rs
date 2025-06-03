@@ -170,7 +170,11 @@
 //! - The struct has no fields.
 //! - The last field of the struct is not a slice (`[T]`), a string (`str`), or a trait object (`dyn Trait`).
 //! - The resulting struct exceeds the maximum size allowed of `isize::MAX`.
-
+//!
+//! # Acknowledgements
+//! 
+//! Many thanks to https://github.com/scottmcm for his invaluable help getting the factory methods
+//! in top shape.
 extern crate proc_macro;
 mod macro_args;
 
