@@ -424,12 +424,21 @@ fn alloc_funcs(no_std: bool) -> (TokenStream, TokenStream, TokenStream) {
     }
 }
 
-fn alloc_zst(box_path: &TokenStream) -> TokenStream {
+fn alloc_zst(box_path: &TokenStream, for_trait: bool) -> TokenStream {
+    let mem_ptr = quote! { let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr(); };
+
+    let fat_ptr = if for_trait {
+        quote! { let fat_ptr = ::core::mem::transmute::<(*mut (), *const ()), *mut Self>((mem_ptr, vtable)); }
+    } else {
+        quote! { let fat_ptr = ::core::mem::transmute::<(*mut (), usize), *mut Self>((mem_ptr, 0_usize)); }
+    };
+
+    let box_from_raw = quote! { #box_path::from_raw(fat_ptr) };
+
     quote! {
-         // Handle ZST case
-        let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr();
-        let fat_ptr = ::core::mem::transmute::<(*mut (), usize), *mut Self>((mem_ptr, 0));
-        #box_path::from_raw(fat_ptr)
+        #mem_ptr
+        #fat_ptr
+        #box_from_raw
     }
 }
 
@@ -454,7 +463,7 @@ fn factory_for_slice_arg(
     factory_where_clause.predicates.push(copy_bound_tokens);
 
     let (box_path, alloc_path, handle_alloc_error) = alloc_funcs(macro_args.no_std);
-    let make_zst = alloc_zst(&box_path);
+    let make_zst = alloc_zst(&box_path, false);
 
     let tail_layout = tail_layout(tail_elem_type, struct_info.tail_field.ty.span());
     let header_layout = header_layout(struct_info, false);
@@ -522,7 +531,7 @@ fn factory_for_iter_arg(
 ) -> TokenStream {
     let guard_type_tokens = guard_type(macro_args);
     let (box_path, alloc_path, handle_alloc_error) = alloc_funcs(macro_args.no_std);
-    let make_zst = alloc_zst(&box_path);
+    let make_zst = alloc_zst(&box_path, false);
 
     let tail_layout = tail_layout(tail_type, struct_info.tail_field.ty.span());
     let header_layout = header_layout(struct_info, false);
@@ -605,7 +614,7 @@ fn factory_for_iter_arg(
 
 fn factory_for_str_arg(macro_args: &MacroArgs, struct_info: &StructInfo) -> TokenStream {
     let (box_path, alloc_path, handle_alloc_error) = alloc_funcs(macro_args.no_std);
-    let make_zst = alloc_zst(&box_path);
+    let make_zst = alloc_zst(&box_path, false);
 
     let tail_layout = tail_layout(&quote! { u8 }, struct_info.tail_field.ty.span());
     let header_layout = header_layout(struct_info, false);
@@ -699,7 +708,7 @@ fn factory_for_trait_arg(
         .unwrap();
 
     let (box_path, alloc_path, handle_alloc_error) = alloc_funcs(macro_args.no_std);
-    let make_zst = alloc_zst(&box_path);
+    let make_zst = alloc_zst(&box_path, true);
 
     let header_layout = header_layout(struct_info, true);
     let tuple_assignment = args_tuple_assignment(struct_info);
@@ -729,8 +738,6 @@ fn factory_for_trait_arg(
             #trait_generic: #trait_path + Sized
         {
             #tuple_assignment
-
-            println!("HELLO");
 
             let s = args.#tail_args_tuple_idx;
             let trait_object: &dyn #trait_path = &s;

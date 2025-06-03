@@ -122,7 +122,6 @@ fn only_slice_dst_field() {
     assert_eq!(&instance.items_data, char_data);
 }
 
-/*
 #[make_dst_factory]
 struct OnlyTraitField {
     producer: dyn NumberProducer,
@@ -130,10 +129,9 @@ struct OnlyTraitField {
 
 #[test]
 fn only_trait_dst_field() {
-    let instance: Box<OnlyTraitField> = OnlyTraitField::build(TenProducer{});
+    let instance: Box<OnlyTraitField> = OnlyTraitField::build(TenProducer {});
     assert_eq!(instance.producer.get_number(), 10);
 }
-*/
 
 #[make_dst_factory(build_generic_lifetime_str)]
 struct GenericLifetimeStrStruct<'a, K: Default> {
