@@ -299,7 +299,7 @@ fn header_layout(macro_args: &MacroArgs, struct_info: &StructInfo, for_trait: bo
         TailKind::TraitObject(_) => {
             let generic_name = &macro_args.generic_name;
             quote! { #generic_name }
-        },
+        }
     };
 
     quote! {
