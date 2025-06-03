@@ -11,7 +11,9 @@
 * [Why Should You Care?](#why-should-you-care)
 * [Examples](#examples)
 * [Attribute Features](#attribute-features)
+* [Other Features](#other-features)
 * [Error Conditions](#error-conditions)
+* [Acknowledgments](#acknowledgements)
 
 ## Summary
 
@@ -140,7 +142,7 @@ where
 
 fn build_from_slice(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>
 where
-    last_field_type: Copy;
+    last_field_type: Copy + Sized;
 
 // for strings
 fn build(field1, field2, ..., last_field: impl AsRef<str>) -> Box<Self>;
@@ -170,7 +172,17 @@ Some examples:
 
 // The factory functions will be private, called `create` and `create_from_slice`, and support the `no_std` environment
 #[make_dst_factory(create, no_std)]
+
+// The factory functions will be private, called `create` and `create_from_slice`,
+// support the `no_std` environment, and will have generic types called `X`.
+#[make_dst_factory(create, no_std, generic=X)]
 ```
+
+## Other Features
+
+You can use the `#[make_dst_factory]` attribute on structs with the normal Rust
+representation or C representation (`#[repr(C)]`), with any padding and alignment
+specification.
 
 ## Error Conditions
 
@@ -184,4 +196,5 @@ The `#[make_dst_factory]` attribute produces a compile-time error if:
 
 ## Acknowledgements
 
-Many thanks to <https://github.com/scottmcm> for his invaluable help getting the factory methods in top shape.
+Many thanks to <https://github.com/scottmcm> for his invaluable help getting the factory methods
+in top shape.

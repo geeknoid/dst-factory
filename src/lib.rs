@@ -117,12 +117,12 @@
 //! The generated functions are private by default and have the following signatures:
 //!
 //! ```ignore
+//! // for arrays
 //! fn build<G>(field1, field2, ..., last_field: G) -> Box<Self>
 //! where
 //!     G: IntoIterator<Item = last_field_type>,
 //!     <G as IntoIterator>::IntoIter: ExactSizeIterator,
 //!
-//! // for arrays
 //! fn build_from_slice(field1, field2, ..., last_field: &[last_field_type]) -> Box<Self>
 //! where
 //!     last_field_type: Copy + Sized;
@@ -160,6 +160,12 @@
 //! // support the `no_std` environment, and will have generic types called `X`.
 //! #[make_dst_factory(create, no_std, generic=X)]
 //! ```
+//!
+//! # Other Features
+//!
+//! You can use the `#[make_dst_factory]` attribute on structs with the normal Rust
+//! representation or C representation (`#[repr(C)]`), with any padding and alignment
+//! specification.
 //!
 //! # Error Conditions
 //!
