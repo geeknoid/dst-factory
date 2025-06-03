@@ -267,80 +267,58 @@ impl StructInfo<'_> {
     }
 }
 
-/*
-use std::alloc::Layout;
-use std::mem::MaybeUninit;
-
-pub struct MyThing {
-    pub a: u32,
-    pub b: u8,
-    pub c: [u16],
-}
-
-pub const LAYOUT_TO_C: Layout = unsafe {
-    struct JustNeedsToBeEnoughForTheOffsetting([(u32, u8, u16); 2]);
-    let whatever = MaybeUninit::<JustNeedsToBeEnoughForTheOffsetting>::uninit();
-    let p: *const MyThing = std::mem::transmute((&raw const whatever, 0_usize));
-    let q: *const [u16] = &raw const (*p).c;
-    let offset = (q as *const u8).offset_from_unsigned(p as *const u8);
-    let align = std::mem::align_of_val::<MyThing>(&*p);
-    let Ok(l) = Layout::from_size_align(offset, align) else { unreachable!() };
-    l
-};
-*/
-
 fn header_layout(struct_info: &StructInfo, for_trait: bool) -> TokenStream {
-    /*
-        let tail_field_ident = struct_info.tail_field_ident;
+    let tail_field_ident = struct_info.tail_field_ident;
 
-        let header_field_types: Vec<_> = struct_info
-            .header_fields
-            .iter()
-            .map(|field| &field.ty)
-            .collect();
+    let header_field_types: Vec<_> = struct_info
+        .header_fields
+        .iter()
+        .map(|field| &field.ty)
+        .collect();
 
-        if header_field_types.is_empty() {
-            return quote! {
-                let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
-            };
-        }
-
-        let fat_payload = if for_trait {
-            quote! { vtable }
-        } else {
-            quote! { 0_usize }
+    if header_field_types.is_empty() {
+        return quote! {
+            let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
         };
-
-        quote! {
-            let buffer = ::core::mem::MaybeUninit::<[(#( #header_field_types, )*); 32]>::uninit();
-            let (offset, align) = unsafe {
-                let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, #fat_payload));
-                let tail_ptr = &raw const (*head_ptr).#tail_field_ident;
-                (
-                    (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
-                    ::core::mem::align_of_val::<Self>(&*head_ptr)
-                )
-            };
-
-            let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
-        }
-    */
-
-    let _ = for_trait;
-    let mut header_layout_tokens = quote! {
-        let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
-    };
-
-    // Extend layout for each field.
-    for field in &struct_info.header_fields {
-        let field_ty = &field.ty;
-        let field_span = field_ty.span();
-        header_layout_tokens.extend(quote_spanned! {field_span =>
-            let layout = layout.extend(::core::alloc::Layout::new::<#field_ty>()).unwrap().0;
-        });
     }
 
-    header_layout_tokens
+    let fat_payload = if for_trait {
+        quote! { vtable }
+    } else {
+        quote! { 0_usize }
+    };
+
+    quote! {
+        let buffer = ::core::mem::MaybeUninit::<(#( #header_field_types, )*)>::uninit();
+        let (offset, align) = unsafe {
+            let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, #fat_payload));
+            let tail_ptr = &raw const (*head_ptr).#tail_field_ident;
+            (
+                (tail_ptr as *const u8).offset_from_unsigned(head_ptr as *const u8),
+                ::core::mem::align_of_val::<Self>(&*head_ptr)
+            )
+        };
+
+        let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
+    }
+
+    /*
+        let _ = for_trait;
+        let mut header_layout_tokens = quote! {
+            let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
+        };
+
+        // Extend layout for each field.
+        for field in &struct_info.header_fields {
+            let field_ty = &field.ty;
+            let field_span = field_ty.span();
+            header_layout_tokens.extend(quote_spanned! {field_span =>
+                let layout = layout.extend(::core::alloc::Layout::new::<#field_ty>()).unwrap().0;
+            });
+        }
+
+        header_layout_tokens
+    */
 }
 
 fn tail_layout<T: quote::ToTokens>(tail_type: &T, span: Span) -> TokenStream {
@@ -494,7 +472,6 @@ fn factory_for_slice_arg(
             let s = args.#tail_args_tuple_idx.as_ref();
             let len = s.len();
 
-            // Calculate the total size of the struct, including the header and tail fields
             #header_layout
             let layout = layout.extend(#tail_layout).expect("Struct exceeds maximum size allowed of isize::MAX").0;
             let layout = layout.pad_to_align();
@@ -568,7 +545,6 @@ fn factory_for_iter_arg(
             let iter = args.#tail_args_tuple_idx.into_iter();
             let len = iter.len();
 
-            // Calculate the total size of the struct, including the header and tail fields
             #header_layout
             let layout = layout.extend(#tail_layout).expect("Struct exceeds maximum size allowed of isize::MAX").0;
             let layout = layout.pad_to_align();
@@ -647,7 +623,6 @@ fn factory_for_str_arg(macro_args: &MacroArgs, struct_info: &StructInfo) -> Toke
             let s = args.#tail_args_tuple_idx.as_ref();
             let len = s.len();
 
-            // Calculate the total size of the struct, including the header and tail fields
             #header_layout
             let layout = layout.extend(#tail_layout).expect("Struct exceeds maximum size allowed of isize::MAX").0;
             let layout = layout.pad_to_align();
@@ -743,7 +718,6 @@ fn factory_for_trait_arg(
             let trait_object: &dyn #trait_path = &s;
             let (_, vtable): (*const #trait_generic, *const ()) = unsafe { ::core::mem::transmute(trait_object) };
 
-            // Calculate the total size of the struct, including the header and tail fields
             #header_layout
             let layout = layout.extend(::core::alloc::Layout::new::<#trait_generic>()).expect("Struct exceeds maximum size allowed of isize::MAX").0;
             let layout = layout.pad_to_align();
@@ -802,7 +776,6 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 
     let struct_name_ident = struct_info.struct_name;
     Ok(quote! {
-        #[repr(C)]
         #input_struct
 
         impl #impl_generics #struct_name_ident #ty_generics #where_clause {

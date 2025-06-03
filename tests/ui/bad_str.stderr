@@ -4,6 +4,16 @@ error[E0512]: cannot transmute between types of different sizes, or dependently-
 6 | #[make_dst_factory]
   | ^^^^^^^^^^^^^^^^^^^
   |
+  = note: source type: `(*const MaybeUninit<(i32,)>, usize)` (128 bits)
+  = note: target type: `*const BadStr` (64 bits)
+  = note: this error originates in the attribute macro `make_dst_factory` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0512]: cannot transmute between types of different sizes, or dependently-sized types
+ --> tests/ui/bad_str.rs:6:1
+  |
+6 | #[make_dst_factory]
+  | ^^^^^^^^^^^^^^^^^^^
+  |
   = note: source type: `(*mut (), usize)` (128 bits)
   = note: target type: `*mut BadStr` (64 bits)
   = note: this error originates in the attribute macro `make_dst_factory` (in Nightly builds, run with -Z macro-backtrace for more info)
