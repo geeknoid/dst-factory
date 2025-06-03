@@ -51,8 +51,7 @@ fn basic_slice_usage() {
     for i in 0..64 {
         let v = vec!['*'; i];
 
-        let instance: Box<BasicSliceStruct<char>> =
-            BasicSliceStruct::basic_slice_builder_from_slice(i, v.as_slice());
+        let instance: Box<BasicSliceStruct<char>> = BasicSliceStruct::basic_slice_builder_from_slice(i, v.as_slice());
 
         assert_eq!(instance.id, i);
         assert_eq!(&instance.elements, v.as_slice());
@@ -93,8 +92,7 @@ struct DefaultBuilderNameStruct {
 
 #[test]
 fn default_builder_name() {
-    let instance: Box<DefaultBuilderNameStruct> =
-        DefaultBuilderNameStruct::build(1_234_567_890, "default_tag");
+    let instance: Box<DefaultBuilderNameStruct> = DefaultBuilderNameStruct::build(1_234_567_890, "default_tag");
     assert_eq!(instance.value, 1_234_567_890);
     assert_eq!(&instance.name_tag, "default_tag");
 }
@@ -118,8 +116,7 @@ struct OnlySliceField<T: Clone> {
 #[test]
 fn only_slice_dst_field() {
     let char_data: &[char] = &['x', 'y', 'z'];
-    let instance: Box<OnlySliceField<char>> =
-        OnlySliceField::build_only_slice_from_slice(char_data);
+    let instance: Box<OnlySliceField<char>> = OnlySliceField::build_only_slice_from_slice(char_data);
     assert_eq!(&instance.items_data, char_data);
 }
 
@@ -169,8 +166,7 @@ struct GenericConstStruct<const SZ: usize> {
 
 #[test]
 fn generic_const_dst() {
-    let instance: Box<GenericConstStruct<2>> =
-        GenericConstStruct::build(42, [0, 1], [3, 4], "dynamic payload part");
+    let instance: Box<GenericConstStruct<2>> = GenericConstStruct::build(42, [0, 1], [3, 4], "dynamic payload part");
     assert_eq!(instance.id, 42);
     assert_eq!(&instance.payload, "dynamic payload part");
 }
@@ -195,10 +191,7 @@ fn complex_fields_before_dst() {
         "Log entry data here",
     );
     assert_eq!(instance.coordinates, (1.0, -2.5, 3.0));
-    assert_eq!(
-        instance.tags,
-        Some(vec!["tag1".to_string(), "tag2".to_string()])
-    );
+    assert_eq!(instance.tags, Some(vec!["tag1".to_string(), "tag2".to_string()]));
     assert_eq!(&instance.raw_log, "Log entry data here"); // This test fails due to a bug in the macro
 }
 
@@ -214,8 +207,7 @@ where
 #[test]
 fn struct_from_iter_where_clause() {
     let u8_items: &[u8] = &[11, 22, 33];
-    let instance: Box<WhereClauseStruct<u8>> =
-        WhereClauseStruct::build_where_clause_from_slice(5u8, u8_items);
+    let instance: Box<WhereClauseStruct<u8>> = WhereClauseStruct::build_where_clause_from_slice(5u8, u8_items);
     assert_eq!(instance.fixed_item, 5u8);
     assert_eq!(&instance.variable_items, u8_items);
 }
@@ -229,8 +221,7 @@ struct DerivedExampleStruct {
 
 #[test]
 fn interaction_from_iter_derives() {
-    let instance: Box<DerivedExampleStruct> =
-        DerivedExampleStruct::build_derived(99, "derived_name");
+    let instance: Box<DerivedExampleStruct> = DerivedExampleStruct::build_derived(99, "derived_name");
     assert_eq!(instance.id_val, 99);
     assert_eq!(&instance.name_val, "derived_name");
     assert!(!format!("{instance:?}").is_empty());
@@ -239,8 +230,7 @@ fn interaction_from_iter_derives() {
 #[test]
 fn empty_dst_slice_data() {
     let empty_u16_data: &[u16] = &[];
-    let instance: Box<BasicSliceStruct<u16>> =
-        BasicSliceStruct::basic_slice_builder_from_slice(empty_u16_data.len(), empty_u16_data);
+    let instance: Box<BasicSliceStruct<u16>> = BasicSliceStruct::basic_slice_builder_from_slice(empty_u16_data.len(), empty_u16_data);
     assert_eq!(instance.id, 0);
     assert!(instance.elements.is_empty());
     assert_eq!(&instance.elements, empty_u16_data);
@@ -263,8 +253,7 @@ struct ZstSliceStruct {
 #[test]
 fn zst_slice_dst() {
     let zst_data_slice: &[()] = &[(), (), (), ()];
-    let instance: Box<ZstSliceStruct> =
-        ZstSliceStruct::build_zst_slice_from_slice(0xAB_CDEF, zst_data_slice);
+    let instance: Box<ZstSliceStruct> = ZstSliceStruct::build_zst_slice_from_slice(0xAB_CDEF, zst_data_slice);
     assert_eq!(instance.a, 0xAB_CDEF);
     assert_eq!(instance.unit_slice.len(), 4);
 }
@@ -295,9 +284,7 @@ impl ExactSizeIterator for FaultyIter {
 }
 
 #[test]
-#[should_panic(
-    expected = "Mismatch between iterator-reported length and the number of items produced by the iterator"
-)]
+#[should_panic(expected = "Mismatch between iterator-reported length and the number of items produced by the iterator")]
 fn build_with_too_many_items() {
     let iterator_with_wrong_len = FaultyIter {
         items_to_yield: 20,
@@ -309,9 +296,7 @@ fn build_with_too_many_items() {
 }
 
 #[test]
-#[should_panic(
-    expected = "Mismatch between iterator-reported length and the number of items produced by the iterator"
-)]
+#[should_panic(expected = "Mismatch between iterator-reported length and the number of items produced by the iterator")]
 fn build_with_too_few_items() {
     let iterator_with_wrong_len = FaultyIter {
         items_to_yield: 10,
@@ -391,20 +376,10 @@ struct Align32 {
 
 #[test]
 fn aligned_slice_struct() {
-    let instance: Box<AlignedSliceStruct<Align32>> = AlignedSliceStruct::build(
-        42,
-        [Align32 {
-            payload: 0xDEAD_BEEF,
-        }],
-    );
+    let instance: Box<AlignedSliceStruct<Align32>> = AlignedSliceStruct::build(42, [Align32 { payload: 0xDEAD_BEEF }]);
 
     assert_eq!(instance.data, 42);
-    assert_eq!(
-        instance.tail[0],
-        Align32 {
-            payload: 0xDEA_DBEEF
-        }
-    );
+    assert_eq!(instance.tail[0], Align32 { payload: 0xDEA_DBEEF });
 }
 
 #[make_dst_factory]
@@ -426,8 +401,7 @@ impl NumberProducer for HundredProducer {
 
 #[test]
 fn aligned_trait_struct() {
-    let instance: Box<AlignedTraitStruct> =
-        AlignedTraitStruct::build(42, HundredProducer { payload: 100 });
+    let instance: Box<AlignedTraitStruct> = AlignedTraitStruct::build(42, HundredProducer { payload: 100 });
 
     assert_eq!(instance.data, 42);
     assert_eq!(instance.tail.get_number(), 100);

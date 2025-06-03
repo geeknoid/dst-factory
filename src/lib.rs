@@ -185,8 +185,8 @@ use quote::{format_ident, quote, quote_spanned};
 use std::iter::once;
 use syn::token::Where;
 use syn::{
-    Field, Fields, Generics, Ident, Index, ItemStruct, Type, TypePath, TypeTraitObject,
-    parse::Result as SynResult, punctuated::Punctuated, spanned::Spanned,
+    Field, Fields, Generics, Ident, Index, ItemStruct, Type, TypePath, TypeTraitObject, parse::Result as SynResult, punctuated::Punctuated,
+    spanned::Spanned,
 };
 
 enum TailKind {
@@ -210,10 +210,7 @@ impl StructInfo<'_> {
         match &input_struct.fields {
             Fields::Named(named_fields) => {
                 if named_fields.named.is_empty() {
-                    return Err(syn::Error::new_spanned(
-                        named_fields,
-                        "Struct must have at least one field",
-                    ));
+                    return Err(syn::Error::new_spanned(named_fields, "Struct must have at least one field"));
                 }
 
                 // Split fields into header fields (all but last) and the tail field (last)
@@ -224,8 +221,7 @@ impl StructInfo<'_> {
                 // Verify the last field is a DST with unsized type [T], str, or dyn Trait
                 match &last_field.ty {
                     Type::Path(type_path) if type_path.path.is_ident("str") => {}
-                    Type::Path(TypePath { path, .. })
-                        if path.segments.last().is_some_and(|s| s.ident == "str") => {}
+                    Type::Path(TypePath { path, .. }) if path.segments.last().is_some_and(|s| s.ident == "str") => {}
 
                     Type::TraitObject(trait_object) => {
                         tail_kind = TailKind::TraitObject(trait_object.clone());
@@ -275,11 +271,7 @@ impl StructInfo<'_> {
 fn header_layout(macro_args: &MacroArgs, struct_info: &StructInfo, for_trait: bool) -> TokenStream {
     let tail_field_ident = struct_info.tail_field_ident;
 
-    let header_field_types: Vec<_> = struct_info
-        .header_fields
-        .iter()
-        .map(|field| &field.ty)
-        .collect();
+    let header_field_types: Vec<_> = struct_info.header_fields.iter().map(|field| &field.ty).collect();
 
     if header_field_types.is_empty() {
         return quote! {
@@ -382,8 +374,8 @@ fn args_tuple_assignment(struct_info: &StructInfo) -> TokenStream {
     }
 }
 
-fn alloc_funcs(no_std: bool) -> (TokenStream, TokenStream, TokenStream) {
-    if no_std {
+fn alloc_funcs(no_std: bool) -> (TokenStream, TokenStream) {
+    let (box_path, alloc_path, handle_alloc_error) = if no_std {
         (
             quote! { ::alloc::boxed::Box },
             quote! { ::alloc::alloc::alloc },
@@ -395,7 +387,16 @@ fn alloc_funcs(no_std: bool) -> (TokenStream, TokenStream, TokenStream) {
             quote! { ::std::alloc::alloc },
             quote! { ::std::alloc::handle_alloc_error(layout) },
         )
-    }
+    };
+
+    let alloc = quote! {
+        let mem_ptr = #alloc_path(layout);
+        if mem_ptr.is_null() {
+            #handle_alloc_error
+        }
+    };
+
+    (alloc, box_path)
 }
 
 fn alloc_zst(box_path: &TokenStream, for_trait: bool) -> TokenStream {
@@ -416,11 +417,7 @@ fn alloc_zst(box_path: &TokenStream, for_trait: bool) -> TokenStream {
     }
 }
 
-fn factory_for_slice_arg(
-    macro_args: &MacroArgs,
-    struct_info: &StructInfo,
-    tail_elem_type: &Type,
-) -> TokenStream {
+fn factory_for_slice_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_elem_type: &Type) -> TokenStream {
     let copy_bound_tokens: syn::WherePredicate = syn::parse_quote_spanned! {tail_elem_type.span()=>
         #tail_elem_type: ::core::marker::Copy
     };
@@ -436,7 +433,7 @@ fn factory_for_slice_arg(
 
     factory_where_clause.predicates.push(copy_bound_tokens);
 
-    let (box_path, alloc_path, handle_alloc_error) = alloc_funcs(macro_args.no_std);
+    let (alloc, box_path) = alloc_funcs(macro_args.no_std);
     let make_zst = alloc_zst(&box_path, false);
 
     let tail_layout = tail_layout(tail_elem_type, struct_info.tail_field.ty.span());
@@ -476,10 +473,7 @@ fn factory_for_slice_arg(
                 if layout.size() == 0 {
                     #make_zst
                 } else {
-                    let mem_ptr = #alloc_path(layout);
-                    if mem_ptr.is_null() {
-                        #handle_alloc_error
-                    }
+                    #alloc
 
                     let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
                     ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
@@ -497,13 +491,9 @@ fn factory_for_slice_arg(
     }
 }
 
-fn factory_for_iter_arg(
-    macro_args: &MacroArgs,
-    struct_info: &StructInfo,
-    tail_type: &Type,
-) -> TokenStream {
+fn factory_for_iter_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_type: &Type) -> TokenStream {
     let guard_type_tokens = guard_type(macro_args);
-    let (box_path, alloc_path, handle_alloc_error) = alloc_funcs(macro_args.no_std);
+    let (alloc, box_path) = alloc_funcs(macro_args.no_std);
     let make_zst = alloc_zst(&box_path, false);
 
     let tail_layout = tail_layout(tail_type, struct_info.tail_field.ty.span());
@@ -549,10 +539,7 @@ fn factory_for_iter_arg(
                 if layout.size() == 0 {
                     #make_zst
                 } else {
-                    let mem_ptr = #alloc_path(layout);
-                    if mem_ptr.is_null() {
-                        #handle_alloc_error
-                    }
+                    #alloc
 
                     let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
                     ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
@@ -585,7 +572,7 @@ fn factory_for_iter_arg(
 }
 
 fn factory_for_str_arg(macro_args: &MacroArgs, struct_info: &StructInfo) -> TokenStream {
-    let (box_path, alloc_path, handle_alloc_error) = alloc_funcs(macro_args.no_std);
+    let (alloc, box_path) = alloc_funcs(macro_args.no_std);
     let make_zst = alloc_zst(&box_path, false);
 
     let tail_layout = tail_layout(&quote! { u8 }, struct_info.tail_field.ty.span());
@@ -627,10 +614,7 @@ fn factory_for_str_arg(macro_args: &MacroArgs, struct_info: &StructInfo) -> Toke
                 if layout.size() == 0 {
                     #make_zst
                 } else {
-                    let mem_ptr = #alloc_path(layout);
-                    if mem_ptr.is_null() {
-                        #handle_alloc_error
-                    }
+                    #alloc
 
                     let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
                     ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
@@ -648,11 +632,7 @@ fn factory_for_str_arg(macro_args: &MacroArgs, struct_info: &StructInfo) -> Toke
     }
 }
 
-fn factory_for_trait_arg(
-    macro_args: &MacroArgs,
-    struct_info: &StructInfo,
-    type_trait_object: &TypeTraitObject,
-) -> SynResult<TokenStream> {
+fn factory_for_trait_arg(macro_args: &MacroArgs, struct_info: &StructInfo, type_trait_object: &TypeTraitObject) -> SynResult<TokenStream> {
     // Verify that the trait object is not a higher-rank trait bound
     for bound in &type_trait_object.bounds {
         if let syn::TypeParamBound::Trait(trait_bound) = bound {
@@ -678,7 +658,7 @@ fn factory_for_trait_arg(
         })
         .unwrap();
 
-    let (box_path, alloc_path, handle_alloc_error) = alloc_funcs(macro_args.no_std);
+    let (alloc, box_path) = alloc_funcs(macro_args.no_std);
     let make_zst = alloc_zst(&box_path, true);
 
     let header_layout = header_layout(macro_args, struct_info, true);
@@ -722,10 +702,7 @@ fn factory_for_trait_arg(
                 if layout.size() == 0 {
                     #make_zst
                 } else {
-                    let mem_ptr = #alloc_path(layout);
-                    if mem_ptr.is_null() {
-                        #handle_alloc_error
-                    }
+                    #alloc
 
                     let fat_ptr = ::core::mem::transmute::<(*mut u8, *const ()), *mut Self>((mem_ptr, vtable));
                     ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
@@ -745,16 +722,13 @@ fn factory_for_trait_arg(
 fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult<TokenStream> {
     let macro_args = MacroArgs::parse(attr_args)?;
     let input_struct: ItemStruct = syn::parse2(item)?;
-
     let struct_info = StructInfo::new(&input_struct)?;
-    let (impl_generics, ty_generics, where_clause) = struct_info.struct_generics.split_for_impl();
-    let mut generated_factories = Vec::new();
 
+    let mut generated_factories = Vec::new();
     match &struct_info.tail_kind {
         TailKind::Slice(elem_type) => {
-            generated_factories.push(factory_for_slice_arg(&macro_args, &struct_info, elem_type));
-
             generated_factories.push(factory_for_iter_arg(&macro_args, &struct_info, elem_type));
+            generated_factories.push(factory_for_slice_arg(&macro_args, &struct_info, elem_type));
         }
 
         TailKind::Str => {
@@ -762,14 +736,11 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
         }
 
         TailKind::TraitObject(type_trait_object) => {
-            generated_factories.push(factory_for_trait_arg(
-                &macro_args,
-                &struct_info,
-                type_trait_object,
-            )?);
+            generated_factories.push(factory_for_trait_arg(&macro_args, &struct_info, type_trait_object)?);
         }
     }
 
+    let (impl_generics, ty_generics, where_clause) = struct_info.struct_generics.split_for_impl();
     let struct_name_ident = struct_info.struct_name;
     Ok(quote! {
         #input_struct
@@ -822,10 +793,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 /// }
 /// ```
 #[proc_macro_attribute]
-pub fn make_dst_factory(
-    attr_args: proc_macro::TokenStream,
-    item: proc_macro::TokenStream,
-) -> proc_macro::TokenStream {
+pub fn make_dst_factory(attr_args: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let result = make_dst_factory_impl(attr_args.into(), item.into());
     result.unwrap_or_else(|err| err.to_compile_error()).into()
 }

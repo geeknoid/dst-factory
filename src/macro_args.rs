@@ -42,9 +42,7 @@ impl Parse for MacroArgs {
 
         // Check for visibility
         if input.peek(Token![pub]) {
-            result.visibility = input
-                .parse()
-                .map_err(|_| input.error("Failed to parse visibility"))?;
+            result.visibility = input.parse().map_err(|_| input.error("Failed to parse visibility"))?;
 
             if !input.is_empty() {
                 input
