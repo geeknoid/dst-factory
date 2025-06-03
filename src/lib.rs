@@ -172,7 +172,7 @@
 //! - The resulting struct exceeds the maximum size allowed of `isize::MAX`.
 //!
 //! # Acknowledgements
-//! 
+//!
 //! Many thanks to https://github.com/scottmcm for his invaluable help getting the factory methods
 //! in top shape.
 extern crate proc_macro;
@@ -314,24 +314,6 @@ fn header_layout(macro_args: &MacroArgs, struct_info: &StructInfo, for_trait: bo
 
         let layout = ::core::alloc::Layout::from_size_align(offset, align).unwrap();
     }
-
-    /*
-        let _ = for_trait;
-        let mut header_layout_tokens = quote! {
-            let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
-        };
-
-        // Extend layout for each field.
-        for field in &struct_info.header_fields {
-            let field_ty = &field.ty;
-            let field_span = field_ty.span();
-            header_layout_tokens.extend(quote_spanned! {field_span =>
-                let layout = layout.extend(::core::alloc::Layout::new::<#field_ty>()).unwrap().0;
-            });
-        }
-
-        header_layout_tokens
-    */
 }
 
 fn tail_layout<T: quote::ToTokens>(tail_type: &T, span: Span) -> TokenStream {
