@@ -173,8 +173,9 @@
 //!
 //! # Acknowledgements
 //!
-//! Many thanks to https://github.com/scottmcm for his invaluable help getting the factory methods
+//! Many thanks to <https://github.com/scottmcm> for his invaluable help getting the factory methods
 //! in top shape.
+
 extern crate proc_macro;
 mod macro_args;
 

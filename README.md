@@ -184,4 +184,4 @@ The `#[make_dst_factory]` attribute produces a compile-time error if:
 
 ## Acknowledgements
 
-Many thanks to https://github.com/scottmcm for his invaluable help getting the factory methods in top shape.
+Many thanks to <https://github.com/scottmcm> for his invaluable help getting the factory methods in top shape.
