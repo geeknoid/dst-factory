@@ -1,12 +1,8 @@
 use proc_macro2::TokenStream;
-use syn::spanned::Spanned;
 use syn::{
     Ident, Result as SynResult, Token, Visibility,
     parse::{Parse, ParseStream, discouraged::Speculative},
 };
-
-const DEFAULT_BASE_FACTORY_NAME: &str = "build";
-const DEFAULT_GENERIC_NAME: &str = "G";
 
 pub struct MacroArgs {
     pub base_factory_name: Ident,
@@ -15,14 +11,20 @@ pub struct MacroArgs {
     pub generic_name: Ident,
 }
 
-impl Parse for MacroArgs {
-    fn parse(input: ParseStream) -> SynResult<Self> {
-        let mut result = Self {
-            base_factory_name: Ident::new(DEFAULT_BASE_FACTORY_NAME, input.span()),
+impl Default for MacroArgs {
+    fn default() -> Self {
+        Self {
+            base_factory_name: Ident::new("build", proc_macro2::Span::call_site()),
             visibility: Visibility::Inherited,
             no_std: false,
-            generic_name: Ident::new(DEFAULT_GENERIC_NAME, input.span()),
-        };
+            generic_name: Ident::new("G", proc_macro2::Span::call_site()),
+        }
+    }
+}
+
+impl Parse for MacroArgs {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let mut result = Self::default();
 
         // Check for factory name
         if input.peek(syn::Ident) {
@@ -85,12 +87,7 @@ impl Parse for MacroArgs {
 impl MacroArgs {
     pub fn parse(attr_args_ts: TokenStream) -> SynResult<Self> {
         if attr_args_ts.is_empty() {
-            Ok(Self {
-                base_factory_name: Ident::new(DEFAULT_BASE_FACTORY_NAME, attr_args_ts.span()),
-                visibility: Visibility::Inherited,
-                no_std: false,
-                generic_name: Ident::new(DEFAULT_GENERIC_NAME, attr_args_ts.span()),
-            })
+            Ok(Self::default())
         } else {
             syn::parse2(attr_args_ts)
         }
