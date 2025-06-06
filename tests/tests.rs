@@ -430,4 +430,5 @@ fn error_paths() {
     t.compile_fail("tests/ui/need_no_std.rs");
     t.compile_fail("tests/ui/bad_str.rs");
     t.compile_fail("tests/ui/higher_rank_trait.rs");
+    t.compile_fail("tests/ui/unit_struct.rs");
 }

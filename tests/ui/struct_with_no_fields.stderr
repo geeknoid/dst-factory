@@ -1,8 +1,7 @@
 error: Struct must have at least one field
- --> tests/ui/struct_with_no_fields.rs:4:27
+ --> tests/ui/struct_with_no_fields.rs:4:1
   |
-4 |   struct StructWithNoFields {
-  |  ___________________________^
+4 | / struct StructWithNoFields {
 5 | |     // No fields
 6 | | }
   | |_^

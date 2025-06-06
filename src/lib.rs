@@ -205,77 +205,60 @@ struct StructInfo<'a> {
     struct_name: &'a Ident,
     struct_generics: &'a Generics,
     header_fields: Box<[&'a Field]>,
-    header_field_idents: Box<[&'a Ident]>,
+    header_field_idents: Box<[Ident]>,
     tail_field: &'a Field,
-    tail_field_ident: &'a Ident,
+    tail_field_ident: Ident,
     tail_kind: TailKind,
 }
 
-impl StructInfo<'_> {
-    fn new(input_struct: &ItemStruct) -> SynResult<StructInfo> {
+impl<'a> StructInfo<'a> {
+    fn new(input_struct: &'a ItemStruct) -> SynResult<Self> {
         match &input_struct.fields {
             Fields::Named(named_fields) => {
-                if named_fields.named.is_empty() {
-                    return Err(syn::Error::new_spanned(named_fields, "Struct must have at least one field"));
+                let fields = &named_fields.named;
+                if fields.is_empty() {
+                    return Err(syn::Error::new_spanned(input_struct, "Struct must have at least one field"));
                 }
 
-                // Split fields into header fields (all but last) and the tail field (last)
-                let mut fields_iter = named_fields.named.iter();
-                let last_field = fields_iter.next_back().unwrap(); // Safe because we checked for emptiness above
+                let tail_field = fields.last().unwrap();
                 let mut tail_kind = TailKind::Str;
 
-                // Verify the last field is a DST with unsized type [T], str, or dyn Trait
-                match &last_field.ty {
+                match &tail_field.ty {
                     Type::Path(type_path) if type_path.path.is_ident("str") => {}
                     Type::Path(TypePath { path, .. }) if path.segments.last().is_some_and(|s| s.ident == "str") => {}
-
-                    Type::TraitObject(trait_object) => {
-                        tail_kind = TailKind::TraitObject(trait_object.clone());
-                    }
+                    Type::TraitObject(trait_object) => tail_kind = TailKind::TraitObject(trait_object.clone()),
                     Type::Slice(type_slice) => tail_kind = TailKind::Slice(type_slice.elem.clone()),
 
                     _ => {
                         return Err(syn::Error::new_spanned(
-                            &last_field.ty,
+                            &tail_field.ty,
                             "Last field must be a dynamically sized type like [T], str, or dyn Trait",
                         ));
                     }
                 }
 
-                let mut header_fields = Vec::new();
-                let mut header_field_idents = Vec::new();
+                let header_fields: Vec<_> = fields.iter().take(fields.len() - 1).collect();
+                let header_field_idents: Vec<_> = header_fields.iter().map(|field| field.ident.as_ref().unwrap().clone()).collect();
 
-                let num_fields = named_fields.named.len();
-                for (i, field) in named_fields.named.iter().enumerate() {
-                    if i < num_fields - 1 {
-                        header_fields.push(field);
-                        header_field_idents.push(field.ident.as_ref().unwrap());
-                    }
-                }
-
-                let tail_field = named_fields.named.last().unwrap();
-
-                Ok(StructInfo {
+                Ok(Self {
                     struct_name: &input_struct.ident,
                     struct_generics: &input_struct.generics,
                     header_fields: header_fields.into_boxed_slice(),
                     header_field_idents: header_field_idents.into_boxed_slice(),
                     tail_field,
-                    tail_field_ident: tail_field.ident.as_ref().unwrap(),
+                    tail_field_ident: tail_field.ident.as_ref().unwrap().clone(),
                     tail_kind,
                 })
             }
 
-            Fields::Unnamed(_) | Fields::Unit => Err(syn::Error::new_spanned(
-                &input_struct.fields,
-                "Structs with unnamed fields are not supported",
-            )),
+            Fields::Unnamed(_) => Err(syn::Error::new_spanned(input_struct, "Tuple structs are not supported")),
+            Fields::Unit => Err(syn::Error::new_spanned(input_struct, "Unit structs are not supported")),
         }
     }
 }
 
 fn header_layout(macro_args: &MacroArgs, struct_info: &StructInfo, for_trait: bool) -> TokenStream {
-    let tail_field_ident = struct_info.tail_field_ident;
+    let tail_field_ident = &struct_info.tail_field_ident;
 
     let header_field_types: Vec<_> = struct_info.header_fields.iter().map(|field| &field.ty).collect();
 
