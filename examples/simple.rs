@@ -28,6 +28,9 @@ struct Traity {
     data: dyn MyTrait,
 }
 
+#[make_dst_factory]
+struct Tuply(u32, str);
+
 fn main() {
     // Create a user instance.
     let user: Box<User> = User::new(33, "A string!");
@@ -44,4 +47,9 @@ fn main() {
     let traity: Box<Traity> = Traity::build(100, my_struct);
     println!("Traity TTL: {}", &traity.ttl);
     println!("Traity data: {}", traity.data.get_42());
+
+    // Create a Tuply instance.
+    let tuply: Box<Tuply> = Tuply::build(100, "Hello");
+    println!("Tuply.0: {}", tuply.0);
+    println!("Tuply.1: {}", &tuply.1);
 }

@@ -23,6 +23,21 @@ fn basic_str_usage() {
 }
 
 #[make_dst_factory]
+struct BasicTupleStruct(usize, str);
+
+#[test]
+fn basic_tuple_usage() {
+    for i in 0..64 {
+        let s = ".".repeat(i);
+
+        let instance: Box<BasicTupleStruct> = BasicTupleStruct::build(i, s.as_str());
+
+        assert_eq!(instance.0, i);
+        assert_eq!(&instance.1, s.as_str());
+    }
+}
+
+#[make_dst_factory]
 struct LongFormStrStruct {
     id: usize,
     text_data: std::primitive::str,
@@ -422,7 +437,6 @@ fn error_paths() {
     t.compile_fail("tests/ui/struct_with_no_fields.rs");
     t.compile_fail("tests/ui/last_field_not_slice_or_str.rs");
     t.compile_fail("tests/ui/macro_not_on_struct.rs");
-    t.compile_fail("tests/ui/unnamed_fields.rs");
     t.compile_fail("tests/ui/dst_field_not_last.rs");
     t.compile_fail("tests/ui/too_many_tokens.rs");
     t.compile_fail("tests/ui/bad_visibility.rs");

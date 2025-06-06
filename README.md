@@ -188,7 +188,7 @@ specification.
 
 The `#[make_dst_factory]` attribute produces a compile-time error if:
 
-- It's applied to anything other than a struct with named fields.
+- It's applied to anything other than a regular struct or a tuple struct.
 - Its arguments are malformed (e.g., incorrect visibility keyword, too many arguments).
 - The struct has no fields.
 - The last field of the struct is not a slice (`[T]`), a string (`str`), or a trait object (`dyn Trait`).

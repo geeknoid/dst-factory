@@ -171,7 +171,7 @@
 //!
 //! The #[[`macro@make_dst_factory`]] attribute produces a compile-time error if:
 //!
-//! - It's applied to anything other than a struct with named fields.
+//! - It's applied to anything other than a regular struct or a tuple struct.
 //! - Its arguments are malformed (e.g., incorrect visibility keyword, too many arguments).
 //! - The struct has no fields.
 //! - The last field of the struct is not a slice (`[T]`), a string (`str`), or a trait object (`dyn Trait`).
@@ -187,9 +187,8 @@ mod macro_args;
 
 use macro_args::MacroArgs;
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote, quote_spanned};
-use std::iter::once;
-use syn::token::Where;
+use quote::{ToTokens, format_ident, quote, quote_spanned};
+use syn::token::{Comma, Where};
 use syn::{
     Field, Fields, Generics, Ident, Index, ItemStruct, Type, TypePath, TypeTraitObject, parse::Result as SynResult, punctuated::Punctuated,
     spanned::Spanned,
@@ -201,59 +200,96 @@ enum TailKind {
     TraitObject(TypeTraitObject),
 }
 
+enum FieldIdent {
+    Named(Ident),
+    Unnamed(Index),
+}
+
+impl ToTokens for FieldIdent {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Self::Named(ident) => ident.to_tokens(tokens),
+            Self::Unnamed(index) => index.to_tokens(tokens),
+        }
+    }
+}
+
 struct StructInfo<'a> {
     struct_name: &'a Ident,
     struct_generics: &'a Generics,
     header_fields: Box<[&'a Field]>,
-    header_field_idents: Box<[Ident]>,
+    header_field_idents: Box<[FieldIdent]>,
+    header_param_idents: Box<[Ident]>,
     tail_field: &'a Field,
-    tail_field_ident: Ident,
+    tail_field_ident: FieldIdent,
+    tail_param_ident: Ident,
     tail_kind: TailKind,
 }
 
 impl<'a> StructInfo<'a> {
     fn new(input_struct: &'a ItemStruct) -> SynResult<Self> {
         match &input_struct.fields {
-            Fields::Named(named_fields) => {
-                let fields = &named_fields.named;
-                if fields.is_empty() {
-                    return Err(syn::Error::new_spanned(input_struct, "Struct must have at least one field"));
-                }
-
-                let tail_field = fields.last().unwrap();
-                let mut tail_kind = TailKind::Str;
-
-                match &tail_field.ty {
-                    Type::Path(type_path) if type_path.path.is_ident("str") => {}
-                    Type::Path(TypePath { path, .. }) if path.segments.last().is_some_and(|s| s.ident == "str") => {}
-                    Type::TraitObject(trait_object) => tail_kind = TailKind::TraitObject(trait_object.clone()),
-                    Type::Slice(type_slice) => tail_kind = TailKind::Slice(type_slice.elem.clone()),
-
-                    _ => {
-                        return Err(syn::Error::new_spanned(
-                            &tail_field.ty,
-                            "Last field must be a dynamically sized type like [T], str, or dyn Trait",
-                        ));
-                    }
-                }
-
-                let header_fields: Vec<_> = fields.iter().take(fields.len() - 1).collect();
-                let header_field_idents: Vec<_> = header_fields.iter().map(|field| field.ident.as_ref().unwrap().clone()).collect();
-
-                Ok(Self {
-                    struct_name: &input_struct.ident,
-                    struct_generics: &input_struct.generics,
-                    header_fields: header_fields.into_boxed_slice(),
-                    header_field_idents: header_field_idents.into_boxed_slice(),
-                    tail_field,
-                    tail_field_ident: tail_field.ident.as_ref().unwrap().clone(),
-                    tail_kind,
-                })
-            }
-
-            Fields::Unnamed(_) => Err(syn::Error::new_spanned(input_struct, "Tuple structs are not supported")),
+            Fields::Named(named_fields) => Self::process_fields(input_struct, &named_fields.named),
+            Fields::Unnamed(unnamed_fields) => Self::process_fields(input_struct, &unnamed_fields.unnamed),
             Fields::Unit => Err(syn::Error::new_spanned(input_struct, "Unit structs are not supported")),
         }
+    }
+
+    fn process_fields(input_struct: &'a ItemStruct, fields: &'a Punctuated<Field, Comma>) -> SynResult<Self> {
+        if fields.is_empty() {
+            return Err(syn::Error::new_spanned(input_struct, "Struct must have at least one field"));
+        }
+
+        let tail_field = fields.last().unwrap();
+        let mut tail_kind = TailKind::Str;
+
+        match &tail_field.ty {
+            Type::Path(type_path) if type_path.path.is_ident("str") => {}
+            Type::Path(TypePath { path, .. }) if path.segments.last().is_some_and(|s| s.ident == "str") => {}
+            Type::TraitObject(trait_object) => tail_kind = TailKind::TraitObject(trait_object.clone()),
+            Type::Slice(type_slice) => tail_kind = TailKind::Slice(type_slice.elem.clone()),
+
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    &tail_field.ty,
+                    "Last field must be a dynamically sized type like [T], str, or dyn Trait",
+                ));
+            }
+        }
+
+        let header_fields: Vec<_> = fields.iter().take(fields.len() - 1).collect();
+        let header_param_idents: Vec<_> = header_fields
+            .iter()
+            .enumerate()
+            .map(|(i, field)| field.ident.clone().unwrap_or_else(|| format_ident!("f{i}")))
+            .collect();
+
+        let mut header_field_idents = Vec::with_capacity(header_fields.len());
+        for (i, field) in header_fields.iter().enumerate() {
+            header_field_idents.push(
+                field
+                    .ident
+                    .as_ref()
+                    .map_or_else(|| FieldIdent::Unnamed(Index::from(i)), |ident| FieldIdent::Named(ident.clone())),
+            );
+        }
+
+        let tail_field_ident = tail_field.ident.as_ref().map_or_else(
+            || FieldIdent::Unnamed(Index::from(header_fields.len())),
+            |ident| FieldIdent::Named(ident.clone()),
+        );
+
+        Ok(Self {
+            struct_name: &input_struct.ident,
+            struct_generics: &input_struct.generics,
+            header_fields: header_fields.into_boxed_slice(),
+            header_field_idents: header_field_idents.into_boxed_slice(),
+            header_param_idents: header_param_idents.into_boxed_slice(),
+            tail_field,
+            tail_field_ident,
+            tail_param_ident: tail_field.ident.clone().unwrap_or_else(|| format_ident!("tail")),
+            tail_kind,
+        })
     }
 }
 
@@ -331,10 +367,11 @@ fn guard_type(macro_args: &MacroArgs) -> TokenStream {
 
 fn header_params(struct_info: &StructInfo) -> Vec<TokenStream> {
     let mut header_params_tokens = Vec::new();
-    for field in &struct_info.header_fields {
-        let field_ident = field.ident.as_ref().unwrap();
-        let field_ty = &field.ty;
-        header_params_tokens.push(quote! { #field_ident: #field_ty });
+
+    for i in 0..struct_info.header_fields.len() {
+        let param_ident = &struct_info.header_param_idents[i];
+        let field_ty = &struct_info.header_fields[i].ty;
+        header_params_tokens.push(quote! { #param_ident: #field_ty });
     }
     header_params_tokens
 }
@@ -344,22 +381,19 @@ fn header_field_writes(struct_info: &StructInfo) -> Vec<TokenStream> {
         .header_field_idents
         .iter()
         .enumerate()
-        .map(|(idx, field_ident_on_struct)| {
-            let tuple_idx = syn::Index::from(idx);
-            quote! { ::core::ptr::write_unaligned(&raw mut ((*fat_ptr).#field_ident_on_struct), args.#tuple_idx);}
+        .map(|(i, field_ident)| {
+            let tuple_idx = syn::Index::from(i);
+            quote! { ::core::ptr::write_unaligned(&raw mut ((*fat_ptr).#field_ident), args.#tuple_idx);}
         })
         .collect()
 }
 
 fn args_tuple_assignment(struct_info: &StructInfo) -> TokenStream {
-    let tuple_elements_for_assignment = &struct_info
-        .header_field_idents
-        .iter()
-        .chain(once(&struct_info.tail_field_ident))
-        .collect::<Vec<_>>();
+    let header_param_idents = &struct_info.header_param_idents;
+    let tail_param_ident = &struct_info.tail_param_ident;
 
     quote! {
-        let args = ( #( #tuple_elements_for_assignment, )* );
+        let args = ( #( #header_param_idents, )* #tail_param_ident, );
     }
 }
 
@@ -434,6 +468,7 @@ fn factory_for_slice_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_
     let factory_name = format_ident!("{}_from_slice", &macro_args.base_factory_name);
     let visibility = &macro_args.visibility;
 
+    let tail_param = &struct_info.tail_param_ident;
     let tail_field = &struct_info.tail_field_ident;
     let struct_name = &struct_info.struct_name;
     let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
@@ -447,7 +482,7 @@ fn factory_for_slice_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_
         #[allow(clippy::transmute_undefined_repr)]
         #visibility fn #factory_name (
             #( #header_params, )*
-            #tail_field: &[#tail_elem_type]
+            #tail_param: &[#tail_elem_type]
         ) -> #box_path<Self> #factory_where_clause {
             #tuple_assignment
 
@@ -495,6 +530,7 @@ fn factory_for_iter_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_t
     let factory_name = &macro_args.base_factory_name;
     let iter_generic_param = &macro_args.generic_name;
 
+    let tail_param = &struct_info.tail_param_ident;
     let tail_field = &struct_info.tail_field_ident;
     let struct_name = &struct_info.struct_name;
     let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
@@ -508,7 +544,7 @@ fn factory_for_iter_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_t
         #[allow(clippy::transmute_undefined_repr)]
         #visibility fn #factory_name <#iter_generic_param> (
             #( #header_params, )*
-            #tail_field: #iter_generic_param
+            #tail_param: #iter_generic_param
         ) -> #box_path<Self>
         where
             #iter_generic_param: ::core::iter::IntoIterator<Item = #tail_type>,
@@ -574,6 +610,7 @@ fn factory_for_str_arg(macro_args: &MacroArgs, struct_info: &StructInfo) -> Toke
     let visibility = &macro_args.visibility;
 
     let struct_name = &struct_info.struct_name;
+    let tail_param = &struct_info.tail_param_ident;
     let tail_field = &struct_info.tail_field_ident;
     let tail_type = &struct_info.tail_field.ty;
     let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
@@ -587,7 +624,7 @@ fn factory_for_str_arg(macro_args: &MacroArgs, struct_info: &StructInfo) -> Toke
         #[allow(clippy::transmute_undefined_repr)]
         #visibility fn #factory_name(
             #( #header_params, )*
-            #tail_field: impl ::core::convert::AsRef<str>
+            #tail_param: impl ::core::convert::AsRef<str>
         ) -> #box_path<Self> {
             #tuple_assignment
 
@@ -660,6 +697,7 @@ fn factory_for_trait_arg(macro_args: &MacroArgs, struct_info: &StructInfo, type_
     let visibility = &macro_args.visibility;
 
     let struct_name = &struct_info.struct_name;
+    let tail_param = &struct_info.tail_param_ident;
     let tail_field = &struct_info.tail_field_ident;
     let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
 
@@ -672,7 +710,7 @@ fn factory_for_trait_arg(macro_args: &MacroArgs, struct_info: &StructInfo, type_
         #[allow(clippy::transmute_undefined_repr)]
         #visibility fn #factory_name <#trait_generic> (
             #( #header_params, )*
-            #tail_field: #trait_generic
+            #tail_param: #trait_generic
         ) -> #box_path<Self>
         where
             #trait_generic: #trait_path + Sized
