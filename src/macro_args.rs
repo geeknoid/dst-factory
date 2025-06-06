@@ -35,21 +35,21 @@ impl Parse for MacroArgs {
 
                 input.advance_to(&ahead);
                 if !input.is_empty() {
-                    input
+                    _ = input
                         .parse::<Token![,]>()
-                        .map_err(|_| input.error("Expected comma after factory name"))?;
+                        .map_err(|_ignored| input.error("Expected comma after factory name"))?;
                 }
             }
         }
 
         // Check for visibility
         if input.peek(Token![pub]) {
-            result.visibility = input.parse().map_err(|_| input.error("Failed to parse visibility"))?;
+            result.visibility = input.parse().map_err(|_ignored| input.error("Failed to parse visibility"))?;
 
             if !input.is_empty() {
-                input
+                _ = input
                     .parse::<Token![,]>()
-                    .map_err(|_| input.error("Expected comma after visibility"))?;
+                    .map_err(|_ignored| input.error("Expected comma after visibility"))?;
             }
         }
 
@@ -69,10 +69,10 @@ impl Parse for MacroArgs {
             let ident = ahead.parse::<Ident>()?;
             if ident == "generic" {
                 input.advance_to(&ahead);
-                input.parse::<Token![=]>()?;
+                _ = input.parse::<Token![=]>()?;
                 result.generic_name = input
                     .parse::<Ident>()
-                    .map_err(|_| input.error("Expected identifier after `generic =`"))?;
+                    .map_err(|_ignored| input.error("Expected identifier after `generic =`"))?;
             }
         }
 

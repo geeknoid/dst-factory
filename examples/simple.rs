@@ -15,7 +15,7 @@ struct Credential {
 trait MyTrait {
     fn get_42(&self) -> u32;
 }
-struct MyStruct {}
+struct MyStruct;
 impl MyTrait for MyStruct {
     fn get_42(&self) -> u32 {
         42

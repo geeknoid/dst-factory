@@ -1,5 +1,3 @@
-#![allow(clippy::literal_string_with_formatting_args)]
-
 use dst_factory::make_dst_factory;
 use std::fmt::Debug;
 use std::ptr::read_unaligned;
@@ -283,12 +281,10 @@ impl Iterator for FaultyIter {
     type Item = u8;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.items_to_yield > 0 {
+        (self.items_to_yield > 0).then(|| {
             self.items_to_yield -= 1;
-            Some(42)
-        } else {
-            None
-        }
+            42u8
+        })
     }
 }
 
@@ -328,7 +324,7 @@ trait NumberProducer {
 }
 
 // an implementation of the trait we're going to use
-struct FortyTwoProducer {}
+struct FortyTwoProducer;
 impl NumberProducer for FortyTwoProducer {
     fn get_number(&self) -> u32 {
         42
@@ -336,7 +332,7 @@ impl NumberProducer for FortyTwoProducer {
 }
 
 // another implementation of the trait we're going to use
-struct TenProducer {}
+struct TenProducer;
 impl NumberProducer for TenProducer {
     fn get_number(&self) -> u32 {
         10
@@ -371,6 +367,7 @@ struct PackedStruct {
 fn packed_struct() {
     let instance: Box<PackedStruct> = PackedStruct::build(0xDEAD_BEEF, "packed data");
 
+    // SAFETY: We are reading a packed field that is guaranteed to be aligned correctly
     let data = unsafe { read_unaligned(&raw const instance.data) };
 
     assert_eq!(data, 0xDEAD_BEEF);

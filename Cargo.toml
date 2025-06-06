@@ -1,7 +1,7 @@
 [package]
 resolver = "3"
 name = "dst-factory"
-version = "0.1.0"
+version = "0.2.0"
 description = "Macro to implement C's flexible array members in Rust"
 categories = ["memory-management", "no-std"]
 keywords = ["memory", "no_std", "ffi", "dst"]
@@ -25,6 +25,17 @@ proc-macro2 = "1.0.95"
 [dev-dependencies]
 trybuild = "1.0.105"
 
+[lints.rust]
+ambiguous_negative_literals = "warn"
+missing_debug_implementations = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+single_use_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_lifetimes = "warn"
+unused_results = "warn"
+
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 correctness = { level = "warn", priority = -1 }
@@ -33,3 +44,27 @@ perf = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
+
+# Explicitly enabled lints from the `restriction` group.
+allow_attributes_without_reason = "warn"
+as_pointer_underscore = "warn"
+assertions_on_result_states = "warn"
+clone_on_ref_ptr = "warn"
+deref_by_slicing = "warn"
+disallowed_script_idents = "warn"
+empty_drop = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+fn_to_numeric_cast_any = "warn"
+if_then_some_else_none = "warn"
+map_err_ignore = "warn"
+multiple_unsafe_ops_per_block = "warn"
+redundant_type_annotations = "warn"
+renamed_function_params = "warn"
+semicolon_outside_block = "warn"
+string_to_string = "warn"
+undocumented_unsafe_blocks = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+unneeded_field_pattern = "warn"
+unused_result_ok = "warn"
