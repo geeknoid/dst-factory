@@ -1,10 +1,10 @@
 [package]
 resolver = "3"
 name = "dst-factory"
-version = "0.2.0"
+version = "0.2.1"
 description = "Macro to implement C's flexible array members in Rust"
 categories = ["memory-management", "no-std"]
-keywords = ["memory", "no_std", "ffi", "dst"]
+keywords = ["memory", "no-std", "ffi", "dst"]
 repository = "https://github.com/geeknoid/dst-factory"
 authors = ["Martin Taillefer <martin@taillefer.org>"]
 license = "MIT"

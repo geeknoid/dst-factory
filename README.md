@@ -33,10 +33,10 @@ functions to be produced that let you easily and safely create instances of your
 
 ## Why Should You Care?
 
-Dynamically sized types aren't for everyone. You can't put hold them as local variables
+Dynamically sized types aren't for everyone. You can't use them as local variables
 or put them in arrays or vectors, so they can be inconvenient to use. However, their value
 lies in situations where you have a lot of heap-allocated objects, as they can substantially
-reduce the memory footprint of your application. If you're building graphs, tress, or other
+reduce the memory footprint of your application. If you're building graphs, trees, or other
 dynamic data structures, you can often leverage DSTs to keep your individual nodes smaller
 and more efficient.
 
@@ -128,12 +128,12 @@ always return boxed instances of the structs.
 
 The common use case for the `#[make_dst_factory]` attribute is to not pass any arguments.
 This results in factory functions called `build` when using a string or dynamic trait as the
-last field of the struct, and `build` and `build` when using an array as the last
+last field of the struct, and `build` and `build_from_slice` when using an array as the last
 field of the struct.
 
 The generated functions are private by default and have the following signatures:
 
-```ignore
+```rust
 // for arrays
 fn build<G>(field1, field2, ..., last_field: G) -> Box<Self>
 where
@@ -163,7 +163,7 @@ grammar is:
 
 Some examples:
 
-```ignore
+```rust
 // The factory functions will be private and called `create` and `create_from_slice`
 #[make_dst_factory(create)]
 
