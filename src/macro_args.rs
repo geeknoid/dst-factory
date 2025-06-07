@@ -85,11 +85,11 @@ impl Parse for MacroArgs {
 }
 
 impl MacroArgs {
-    pub fn parse(attr_args_ts: TokenStream) -> SynResult<Self> {
-        if attr_args_ts.is_empty() {
+    pub fn parse(attr_args: TokenStream) -> SynResult<Self> {
+        if attr_args.is_empty() {
             Ok(Self::default())
         } else {
-            syn::parse2(attr_args_ts)
+            syn::parse2(attr_args)
         }
     }
 }

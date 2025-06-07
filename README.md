@@ -90,7 +90,7 @@ trait NumberProducer {
 }
 
 // an implementation of the trait we're going to use
-struct FortyTwoProducer {}
+struct FortyTwoProducer;
 impl NumberProducer for FortyTwoProducer {
    fn get_number(&self) -> u32 {
        42
@@ -98,7 +98,7 @@ impl NumberProducer for FortyTwoProducer {
 }
 
 // another implementation of the trait we're going to use
-struct TenProducer {}
+struct TenProducer;
 impl NumberProducer for TenProducer {
    fn get_number(&self) -> u32 {
        10

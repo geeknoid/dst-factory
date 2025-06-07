@@ -73,7 +73,7 @@
 //! }
 //!
 //! // an implementation of the trait we're going to use
-//! struct FortyTwoProducer {}
+//! struct FortyTwoProducer;
 //! impl NumberProducer for FortyTwoProducer {
 //!    fn get_number(&self) -> u32 {
 //!        42
@@ -81,7 +81,7 @@
 //! }
 //!
 //! // another implementation of the trait we're going to use
-//! struct TenProducer {}
+//! struct TenProducer;
 //! impl NumberProducer for TenProducer {
 //!    fn get_number(&self) -> u32 {
 //!        10
@@ -190,14 +190,14 @@ use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, format_ident, quote, quote_spanned};
 use syn::token::{Comma, Where};
 use syn::{
-    Field, Fields, Generics, Ident, Index, ItemStruct, Type, TypePath, TypeTraitObject, parse::Result as SynResult, punctuated::Punctuated,
+    Field, Fields, Generics, Ident, Index, ItemStruct, Path, Type, TypePath, parse::Result as SynResult, punctuated::Punctuated,
     spanned::Spanned,
 };
 
 enum TailKind {
     Slice(Box<Type>),
     Str,
-    TraitObject(TypeTraitObject),
+    TraitObject(Path),
 }
 
 enum FieldIdent {
@@ -240,14 +240,42 @@ impl<'a> StructInfo<'a> {
             return Err(syn::Error::new_spanned(input_struct, "Struct must have at least one field"));
         }
 
+        let header_fields: Vec<_> = fields.iter().take(fields.len() - 1).collect();
         let tail_field = fields.last().unwrap();
-        let mut tail_kind = TailKind::Str;
 
-        match &tail_field.ty {
-            Type::Path(type_path) if type_path.path.is_ident("str") => {}
-            Type::Path(TypePath { path, .. }) if path.segments.last().is_some_and(|s| s.ident == "str") => {}
-            Type::TraitObject(trait_object) => tail_kind = TailKind::TraitObject(trait_object.clone()),
-            Type::Slice(type_slice) => tail_kind = TailKind::Slice(type_slice.elem.clone()),
+        let tail_kind = match &tail_field.ty {
+            Type::Path(type_path) if type_path.path.is_ident("str") => TailKind::Str,
+            Type::Path(TypePath { path, .. }) if path.segments.last().is_some_and(|s| s.ident == "str") => TailKind::Str,
+            Type::Slice(type_slice) => TailKind::Slice(type_slice.elem.clone()),
+
+            Type::TraitObject(type_trait_object) => {
+                // Verify that the trait object is not a higher-rank trait bound
+                for bound in &type_trait_object.bounds {
+                    if let syn::TypeParamBound::Trait(trait_bound) = bound {
+                        if trait_bound.lifetimes.is_some() {
+                            return Err(syn::Error::new_spanned(
+                                trait_bound,
+                                "Higher-rank trait bounds (e.g., `for<'a> dyn Trait<'a>`) are not supported for the tail field.",
+                            ));
+                        }
+                    }
+                }
+
+                // Extract the primary trait path from the bounds.
+                let trait_path = type_trait_object
+                    .bounds
+                    .iter()
+                    .find_map(|bound| {
+                        if let syn::TypeParamBound::Trait(trait_bound) = bound {
+                            Some(&trait_bound.path)
+                        } else {
+                            None // Not a trait bound (e.g., a lifetime bound like `'a`).
+                        }
+                    })
+                    .unwrap();
+
+                TailKind::TraitObject(trait_path.clone())
+            }
 
             _ => {
                 return Err(syn::Error::new_spanned(
@@ -255,24 +283,29 @@ impl<'a> StructInfo<'a> {
                     "Last field must be a dynamically sized type like [T], str, or dyn Trait",
                 ));
             }
-        }
+        };
 
-        let header_fields: Vec<_> = fields.iter().take(fields.len() - 1).collect();
         let header_param_idents: Vec<_> = header_fields
             .iter()
             .enumerate()
-            .map(|(i, field)| field.ident.clone().unwrap_or_else(|| format_ident!("f{i}")))
+            .map(|(i, field)| field.ident.as_ref().map_or_else(|| format_ident!("f{i}"), Clone::clone))
             .collect();
 
-        let mut header_field_idents = Vec::with_capacity(header_fields.len());
-        for (i, field) in header_fields.iter().enumerate() {
-            header_field_idents.push(
+        let header_field_idents: Vec<_> = header_fields
+            .iter()
+            .enumerate()
+            .map(|(i, field)| {
                 field
                     .ident
                     .as_ref()
-                    .map_or_else(|| FieldIdent::Unnamed(Index::from(i)), |ident| FieldIdent::Named(ident.clone())),
-            );
-        }
+                    .map_or_else(|| FieldIdent::Unnamed(Index::from(i)), |ident| FieldIdent::Named(ident.clone()))
+            })
+            .collect();
+
+        let tail_param_ident = tail_field
+            .ident
+            .as_ref()
+            .map_or_else(|| format_ident!("f{}", header_fields.len()), Clone::clone);
 
         let tail_field_ident = tail_field.ident.as_ref().map_or_else(
             || FieldIdent::Unnamed(Index::from(header_fields.len())),
@@ -287,7 +320,7 @@ impl<'a> StructInfo<'a> {
             header_param_idents: header_param_idents.into_boxed_slice(),
             tail_field,
             tail_field_ident,
-            tail_param_ident: tail_field.ident.clone().unwrap_or_else(|| format_ident!("tail")),
+            tail_param_ident,
             tail_kind,
         })
     }
@@ -366,14 +399,16 @@ fn guard_type(macro_args: &MacroArgs) -> TokenStream {
 }
 
 fn header_params(struct_info: &StructInfo) -> Vec<TokenStream> {
-    let mut header_params_tokens = Vec::new();
-
-    for i in 0..struct_info.header_fields.len() {
-        let param_ident = &struct_info.header_param_idents[i];
-        let field_ty = &struct_info.header_fields[i].ty;
-        header_params_tokens.push(quote! { #param_ident: #field_ty });
-    }
-    header_params_tokens
+    struct_info
+        .header_fields
+        .iter()
+        .enumerate()
+        .map(|(i, field)| {
+            let param_ident = &struct_info.header_param_idents[i];
+            let field_ty = &field.ty;
+            quote! { #param_ident: #field_ty }
+        })
+        .collect()
 }
 
 fn header_field_writes(struct_info: &StructInfo) -> Vec<TokenStream> {
@@ -445,14 +480,13 @@ fn factory_for_slice_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_
         #tail_elem_type: ::core::marker::Copy
     };
 
-    let mut factory_where_clause = struct_info
-        .struct_generics
-        .where_clause
-        .clone()
-        .unwrap_or_else(|| syn::WhereClause {
+    let mut factory_where_clause = struct_info.struct_generics.where_clause.as_ref().map_or_else(
+        || syn::WhereClause {
             where_token: Where::default(),
             predicates: Punctuated::new(),
-        });
+        },
+        Clone::clone,
+    );
 
     factory_where_clause.predicates.push(copy_bound_tokens);
 
@@ -658,32 +692,7 @@ fn factory_for_str_arg(macro_args: &MacroArgs, struct_info: &StructInfo) -> Toke
     }
 }
 
-fn factory_for_trait_arg(macro_args: &MacroArgs, struct_info: &StructInfo, type_trait_object: &TypeTraitObject) -> SynResult<TokenStream> {
-    // Verify that the trait object is not a higher-rank trait bound
-    for bound in &type_trait_object.bounds {
-        if let syn::TypeParamBound::Trait(trait_bound) = bound {
-            if trait_bound.lifetimes.is_some() {
-                return Err(syn::Error::new_spanned(
-                    trait_bound,
-                    "Higher-rank trait bounds (e.g., `for<'a> dyn Trait<'a>`) are not supported for the tail field.",
-                ));
-            }
-        }
-    }
-
-    // Extract the primary trait path from the bounds.
-    let trait_path = type_trait_object
-        .bounds
-        .iter()
-        .find_map(|bound| {
-            if let syn::TypeParamBound::Trait(trait_bound) = bound {
-                Some(&trait_bound.path)
-            } else {
-                None // Not a trait bound (e.g., a lifetime bound like `'a`).
-            }
-        })
-        .unwrap();
-
+fn factory_for_trait_arg(macro_args: &MacroArgs, struct_info: &StructInfo, trait_path: &Path) -> TokenStream {
     let (alloc, box_path) = alloc_funcs(macro_args.no_std);
     let make_zst = alloc_zst(&box_path, true);
 
@@ -703,7 +712,7 @@ fn factory_for_trait_arg(macro_args: &MacroArgs, struct_info: &StructInfo, type_
 
     let factory_doc = format!("Builds an instance of `Box<{struct_name}>`.");
 
-    Ok(quote! {
+    quote! {
         #[doc = #factory_doc]
         #[allow(clippy::let_unit_value)]
         #[allow(clippy::zst_offset)]
@@ -743,7 +752,7 @@ fn factory_for_trait_arg(macro_args: &MacroArgs, struct_info: &StructInfo, type_
                 }
             }
         }
-    })
+    }
 }
 
 fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult<TokenStream> {
@@ -751,29 +760,30 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
     let input_struct: ItemStruct = syn::parse2(item)?;
     let struct_info = StructInfo::new(&input_struct)?;
 
-    let mut generated_factories = Vec::new();
+    let mut factories = Vec::new();
     match &struct_info.tail_kind {
         TailKind::Slice(elem_type) => {
-            generated_factories.push(factory_for_iter_arg(&macro_args, &struct_info, elem_type));
-            generated_factories.push(factory_for_slice_arg(&macro_args, &struct_info, elem_type));
+            factories.push(factory_for_iter_arg(&macro_args, &struct_info, elem_type));
+            factories.push(factory_for_slice_arg(&macro_args, &struct_info, elem_type));
         }
 
         TailKind::Str => {
-            generated_factories.push(factory_for_str_arg(&macro_args, &struct_info));
+            factories.push(factory_for_str_arg(&macro_args, &struct_info));
         }
 
-        TailKind::TraitObject(type_trait_object) => {
-            generated_factories.push(factory_for_trait_arg(&macro_args, &struct_info, type_trait_object)?);
+        TailKind::TraitObject(trait_path) => {
+            factories.push(factory_for_trait_arg(&macro_args, &struct_info, trait_path));
         }
     }
 
     let (impl_generics, ty_generics, where_clause) = struct_info.struct_generics.split_for_impl();
     let struct_name_ident = struct_info.struct_name;
+
     Ok(quote! {
         #input_struct
 
         impl #impl_generics #struct_name_ident #ty_generics #where_clause {
-            #( #generated_factories )*
+            #( #factories )*
         }
     })
 }
