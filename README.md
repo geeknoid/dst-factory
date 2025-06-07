@@ -184,7 +184,8 @@ Some examples:
 
 You can use the [`#[make_dst_factory]`](https://docs.rs/dst-factory/latest/dst_factory/attr.make_dst_factory.html) attribute on structs with the normal Rust
 representation or C representation (`#[repr(C)]`), with any padding and alignment
-specification.
+specification. See the Rust reference on [Type Layout](https://doc.rust-lang.org/reference/type-layout.html)
+for more details.
 
 ## Error Conditions
 

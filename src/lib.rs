@@ -165,7 +165,8 @@
 //!
 //! You can use the #[[`macro@make_dst_factory`]] attribute on structs with the normal Rust
 //! representation or C representation (`#[repr(C)]`), with any padding and alignment
-//! specification.
+//! specification. See the Rust reference on [Type Layout](https://doc.rust-lang.org/reference/type-layout.html)
+//! for more details.
 //!
 //! # Error Conditions
 //!
@@ -820,7 +821,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 ///     data: str,
 /// }
 ///
-/// trait MyTrait {};
+/// trait MyTrait {}
 ///
 /// // With a trait object as the tail field
 /// #[make_dst_factory]
