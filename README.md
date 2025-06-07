@@ -1,4 +1,4 @@
-# C-like [flexible array members](https://en.wikipedia.org/wiki/Flexible_array_member) for Rust
+# dst-factory
 
 [![crate.io](https://img.shields.io/crates/v/dst-factory.svg)](https://crates.io/crates/dst-factory)
 [![docs.rs](https://docs.rs/dst-factory/badge.svg)](https://docs.rs/dst-factory)
@@ -17,6 +17,8 @@
 
 ## Summary
 
+C-like [flexible array members](https://en.wikipedia.org/wiki/Flexible_array_member) for Rust.
+
 This crate lets you allocate variable data inline at the end of a struct. If you have a
 struct that gets allocated on the heap and has some variable-length data associated with it
 (like a string or an array), then you can allocate this data directly inline with the struct.
@@ -28,8 +30,8 @@ which are types that have a size not known at compile time. DSTs are perfect to 
 flexible array members. But unfortunately, Rust doesn't provide an out-of-the-box way to allocate
 instances of such types. This is where this crate comes in.
 
-You can apply the `#[make_dst_factory]` attribute to your DST struct which causes factory
-functions to be produced that let you easily and safely create instances of your DST.
+You can apply the [`#[make_dst_factory]`](https://docs.rs/dst-factory/latest/dst_factory/attr.make_dst_factory.html) attribute to your DST structs, which causes factory
+functions to be produced that let you easily and safely create instances of your DSTs.
 
 ## Why Should You Care?
 
@@ -126,7 +128,7 @@ always return boxed instances of the structs.
 
 ## Attribute Features
 
-The common use case for the `#[make_dst_factory]` attribute is to not pass any arguments.
+The common use case for the [`#[make_dst_factory]`](https://docs.rs/dst-factory/latest/dst_factory/attr.make_dst_factory.html) attribute is to not pass any arguments.
 This results in factory functions called `build` when using a string or dynamic trait as the
 last field of the struct, and `build` and `build_from_slice` when using an array as the last
 field of the struct.
@@ -157,7 +159,7 @@ The attribute lets you control the name of the generated functions, their
 visibility, and whether to generate code for the `no_std` environment. The general
 grammar is:
 
-```ignore
+```
 #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std] [, generic=<generic_name>])]
 ```
 
@@ -180,13 +182,13 @@ Some examples:
 
 ## Other Features
 
-You can use the `#[make_dst_factory]` attribute on structs with the normal Rust
+You can use the [`#[make_dst_factory]`](https://docs.rs/dst-factory/latest/dst_factory/attr.make_dst_factory.html) attribute on structs with the normal Rust
 representation or C representation (`#[repr(C)]`), with any padding and alignment
 specification.
 
 ## Error Conditions
 
-The `#[make_dst_factory]` attribute produces a compile-time error if:
+The [`#[make_dst_factory]`](https://docs.rs/dst-factory/latest/dst_factory/attr.make_dst_factory.html) attribute produces a compile-time error if:
 
 - It's applied to anything other than a regular struct or a tuple struct.
 - Its arguments are malformed (e.g., incorrect visibility keyword, too many arguments).

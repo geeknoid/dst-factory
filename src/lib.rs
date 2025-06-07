@@ -11,8 +11,8 @@
 //! flexible array members. But unfortunately, Rust doesn't provide an out-of-the-box way to allocate
 //! instances of such types. This is where this crate comes in.
 //!
-//! You can apply the #[[`macro@make_dst_factory`]] attribute to your DST struct which causes factory
-//! functions to be produced that let you easily and safely create instances of your DST.
+//! You can apply the #[[`macro@make_dst_factory`]] attribute to your DST structs, which causes factory
+//! functions to be produced that let you easily and safely create instances of your DSTs.
 //!
 //! # Why Should You Care?
 //!
@@ -109,7 +109,7 @@
 //!
 //! # Attribute Features
 //!
-//! The common use case for the `#[make_dst_factory]` attribute is to not pass any arguments.
+//! The common use case for the #[[`macro@make_dst_factory`]] attribute is to not pass any arguments.
 //! This results in factory functions called `build` when using a string or dynamic trait as the
 //! last field of the struct, and `build` and `build_from_slice` when using an array as the last
 //! field of the struct.
@@ -163,7 +163,7 @@
 //!
 //! # Other Features
 //!
-//! You can use the `#[make_dst_factory]` attribute on structs with the normal Rust
+//! You can use the #[[`macro@make_dst_factory`]] attribute on structs with the normal Rust
 //! representation or C representation (`#[repr(C)]`), with any padding and alignment
 //! specification.
 //!
