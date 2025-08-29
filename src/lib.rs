@@ -44,11 +44,11 @@
 //!
 //! // allocate another user, this time using an iterator
 //! let v = vec![0, 1, 2, 3, 4];
-//! let c = User::build(33, v);
+//! let c = User::build(33, v.iter().copied());
 //!
 //! // destructure this user and compare its key to the vector
 //! // this has the advantage of iterating over u8, not &u8 or &mut u8.
-//! let (_age, signing_key) = User::destroy(c);
+//! let (_age, signing_key) = User::destructure(c);
 //! assert!(signing_key.eq(v.into_iter()));
 //! ```
 //! Here's another example, this time using a string as the last field of a struct:
@@ -116,7 +116,7 @@
 //!
 //! The common use case for the #[[`macro@make_dst_factory`]] attribute is to not pass any arguments.
 //! This results in a function called `build` when using a string or dynamic trait as the
-//! last field of the struct, and the functions `build`, `build_from_slice`, and `destroy` when using an array as the last
+//! last field of the struct, and the functions `build`, `build_from_slice`, and `destructure` when using an array as the last
 //! field of the struct.
 //!
 //! The generated functions are private by default and have the following signatures:
@@ -132,7 +132,7 @@
 //! where
 //!     last_field_type: Copy + Sized;
 //!
-//! fn destroy(this: Box<Self>) -> (Type1, Type2, ..., SelfIter);
+//! fn destructure(this: Box<Self>) -> (Type1, Type2, ..., SelfIter);
 //!
 //! // for strings
 //! fn build(field1, field2, ..., last_field: impl AsRef<str>) -> Box<Self>;
@@ -154,22 +154,22 @@
 //! Some examples:
 //!
 //! ```ignore
-//! // The generated functions will be public and called `build`, `build_from_slice`, and `destroy`.
+//! // The generated functions will be public and called `build`, `build_from_slice`, and `destructure`.
 //! #[make_dst_factory(pub)]
 //!
-//! // The generated functions will be private and called `create`, `create_from_slice`, and `destroy`.
+//! // The generated functions will be private and called `create`, `create_from_slice`, and `destructure`.
 //! #[make_dst_factory(create)]
 //!
-//! // The generated functions will be private and called `create`, `create_from_slice`, and `destructure`.
-//! #[make_dst_factory(create, destructor = destructure)]
+//! // The generated functions will be private and called `create`, `create_from_slice`, and `destroy`.
+//! #[make_dst_factory(create, destructurer = destroy)]
 //!
-//! // The generated functions will be public and called `create`, `create_from_slice`, and `destroy`
+//! // The generated functions will be public and called `create`, `create_from_slice`, and `destructure`
 //! #[make_dst_factory(create, pub)]
 //!
-//! // The generated functions will be private, called `create`, `create_from_slice`, and `destroy`, and support the `no_std` environment
+//! // The generated functions will be private, called `create`, `create_from_slice`, and `destructure`, and support the `no_std` environment
 //! #[make_dst_factory(create, no_std)]
 //!
-//! // The generated functions will be private, called `create`, `create_from_slice`, and `destroy`,
+//! // The generated functions will be private, called `create`, `create_from_slice`, and `destructure`,
 //! // support the `no_std` environment, and will have generic types called `X`.
 //! #[make_dst_factory(create, no_std, generic=X)]
 //! ```
@@ -707,7 +707,7 @@ fn destructor_with_iter(macro_args: &MacroArgs, struct_info: &StructInfo) -> Tok
     let header_types = &struct_info.header_types;
 
     let visibility = &macro_args.visibility;
-    let destructor_name = &macro_args.base_destructor_name;
+    let destructor_name = &macro_args.base_destructurer_name;
 
     let tail_field = &struct_info.tail_field_ident;
     let struct_name = &struct_info.struct_name;

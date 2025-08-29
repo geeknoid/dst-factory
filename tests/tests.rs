@@ -53,7 +53,7 @@ fn long_form_str_usage() {
     }
 }
 
-#[make_dst_factory(basic_slice_builder, destructor = basic_slice_destructor, iterator = IterForBasicSlice, generic = M)]
+#[make_dst_factory(basic_slice_builder, destructurer = basic_slice_destructure, iterator = IterForBasicSlice, generic = M)]
 struct BasicSliceStruct<T> {
     id: usize,
     elements: [T],
@@ -69,7 +69,7 @@ fn basic_slice_usage() {
         assert_eq!(instance.id, i);
         assert_eq!(&instance.elements, v.as_slice());
 
-        let (id, elements_iter): (usize, IterForBasicSlice<char>) = BasicSliceStruct::basic_slice_destructor(instance);
+        let (id, elements_iter): (usize, IterForBasicSlice<char>) = BasicSliceStruct::basic_slice_destructure(instance);
         assert_eq!(id, i);
         assert!(elements_iter.eq(v));
     }
@@ -136,7 +136,7 @@ fn only_slice_dst_field() {
     let instance: Box<OnlySliceField<char>> = OnlySliceField::build_only_slice_from_slice(char_data);
     assert_eq!(&instance.items_data, char_data);
     // notice that this is not a tuple in this case when the slice is the only field
-    let items_iter: OnlySliceFieldIter<char> = OnlySliceField::destroy(instance);
+    let items_iter: OnlySliceFieldIter<char> = OnlySliceField::destructure(instance);
     assert!(items_iter.eq(char_data.iter().copied()));
 }
 
@@ -231,7 +231,7 @@ fn struct_from_iter_where_clause() {
     assert_eq!(instance.fixed_item, 5u8);
     assert_eq!(&instance.variable_items, u8_items);
 
-    let (fixed_item, variable_items_iter) = WhereClauseStruct::destroy(instance);
+    let (fixed_item, variable_items_iter) = WhereClauseStruct::destructure(instance);
     assert_eq!(fixed_item, 5u8);
     assert!(variable_items_iter.eq(u8_items.iter().copied()));
 }
@@ -258,7 +258,7 @@ fn empty_dst_slice_data() {
     assert_eq!(instance.id, 0);
     assert!(instance.elements.is_empty());
     assert_eq!(&instance.elements, empty_u16_data);
-    let (_, mut elements_iter) = BasicSliceStruct::basic_slice_destructor(instance);
+    let (_, mut elements_iter) = BasicSliceStruct::basic_slice_destructure(instance);
     assert_eq!(elements_iter.next(), None);
 }
 
@@ -282,7 +282,7 @@ fn zst_slice_dst() {
     let instance: Box<ZstSliceStruct> = ZstSliceStruct::build_zst_slice_from_slice(0xAB_CDEF, zst_data_slice);
     assert_eq!(instance.a, 0xAB_CDEF);
     assert_eq!(instance.unit_slice.len(), 4);
-    let (a, mut unit_iter) = ZstSliceStruct::destroy(instance);
+    let (a, mut unit_iter) = ZstSliceStruct::destructure(instance);
     assert_eq!(a, 0xAB_CDEF);
     assert_eq!(unit_iter.next(), Some(()));
     assert_eq!(unit_iter.next(), Some(()));
@@ -413,7 +413,7 @@ fn aligned_slice_struct() {
     assert_eq!(instance.data, 42);
     assert_eq!(instance.tail[0], Align32 { payload: 0xDEA_DBEEF });
 
-    let (data, mut tail_iter) = AlignedSliceStruct::destroy(instance);
+    let (data, mut tail_iter) = AlignedSliceStruct::destructure(instance);
     assert_eq!(data, 42);
     assert_eq!(tail_iter.next(), Some(Align32 { payload: 0xDEA_DBEEF }));
 }

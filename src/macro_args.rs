@@ -6,7 +6,7 @@ use syn::{
 
 pub struct MacroArgs {
     pub base_factory_name: Ident,
-    pub base_destructor_name: Ident,
+    pub base_destructurer_name: Ident,
     /// When `None`, defaults to appending "Iter" to the type's name.
     pub iterator_name: Option<Ident>,
     pub visibility: Visibility,
@@ -18,7 +18,7 @@ impl Default for MacroArgs {
     fn default() -> Self {
         Self {
             base_factory_name: Ident::new("build", proc_macro2::Span::call_site()),
-            base_destructor_name: Ident::new("destroy", proc_macro2::Span::call_site()),
+            base_destructurer_name: Ident::new("destructure", proc_macro2::Span::call_site()),
             iterator_name: None,
             visibility: Visibility::Inherited,
             no_std: false,
@@ -35,7 +35,7 @@ impl Parse for MacroArgs {
         if input.peek(syn::Ident) {
             let ahead = input.fork();
             let ident = ahead.parse::<Ident>()?;
-            if ident != "no_std" && ident != "pub" && ident != "generic" && ident != "destructor" && ident != "iterator" {
+            if ident != "no_std" && ident != "pub" && ident != "generic" && ident != "destructurer" && ident != "iterator" {
                 result.base_factory_name = ident;
 
                 input.advance_to(&ahead);
@@ -51,16 +51,16 @@ impl Parse for MacroArgs {
         if input.peek(syn::Ident) {
             let ahead = input.fork();
             let ident = ahead.parse::<Ident>()?;
-            if ident == "destructor" {
+            if ident == "destructurer" {
                 input.advance_to(&ahead);
                 _ = input.parse::<Token![=]>()?;
-                result.base_destructor_name = input
+                result.base_destructurer_name = input
                     .parse::<Ident>()
-                    .map_err(|_ignored| input.error("Expected identifier after `destructor=`"))?;
+                    .map_err(|_ignored| input.error("Expected identifier after `destructurer=`"))?;
                 if !input.is_empty() {
                     _ = input
                         .parse::<Token![,]>()
-                        .map_err(|_ignored| input.error("Expected comma after destructor name"))?;
+                        .map_err(|_ignored| input.error("Expected comma after destructurer name"))?;
                 }
             }
         }
