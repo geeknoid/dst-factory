@@ -221,6 +221,7 @@ struct StructInfo<'a> {
     header_fields: Box<[&'a Field]>,
     header_field_idents: Box<[FieldIdent]>,
     header_param_idents: Box<[Ident]>,
+    header_types: Vec<Type>,
     tail_field: &'a Field,
     tail_field_ident: FieldIdent,
     tail_param_ident: Ident,
@@ -303,6 +304,8 @@ impl<'a> StructInfo<'a> {
             })
             .collect();
 
+        let header_types: Vec<_> = header_fields.iter().map(|field| field.ty.clone()).collect();
+
         let tail_param_ident = tail_field
             .ident
             .as_ref()
@@ -319,6 +322,7 @@ impl<'a> StructInfo<'a> {
             header_fields: header_fields.into_boxed_slice(),
             header_field_idents: header_field_idents.into_boxed_slice(),
             header_param_idents: header_param_idents.into_boxed_slice(),
+            header_types,
             tail_field,
             tail_field_ident,
             tail_param_ident,
@@ -372,12 +376,24 @@ fn tail_layout<T: quote::ToTokens>(tail_type: &T, span: Span) -> TokenStream {
     quote_spanned! { span => ::core::alloc::Layout::array::<#tail_type>(len).expect("Array exceeds maximum size allowed of isize::MAX") }
 }
 
-fn guard_type(macro_args: &MacroArgs) -> TokenStream {
-    let dealloc_path = if macro_args.no_std {
+fn dealloc_path(no_std: bool) -> TokenStream {
+    if no_std {
         quote! { ::alloc::alloc::dealloc }
     } else {
         quote! { ::std::alloc::dealloc }
-    };
+    }
+}
+
+fn box_path(no_std: bool) -> TokenStream {
+    if no_std {
+        quote! { ::alloc::boxed::Box }
+    } else {
+        quote! { ::std::boxed::Box }
+    }
+}
+
+fn guard_type(macro_args: &MacroArgs) -> TokenStream {
+    let dealloc_path = dealloc_path(macro_args.no_std);
 
     quote! {
         struct Guard<T> {
@@ -433,29 +449,19 @@ fn args_tuple_assignment(struct_info: &StructInfo) -> TokenStream {
     }
 }
 
-fn alloc_funcs(no_std: bool) -> (TokenStream, TokenStream) {
-    let (box_path, alloc_path, handle_alloc_error) = if no_std {
-        (
-            quote! { ::alloc::boxed::Box },
-            quote! { ::alloc::alloc::alloc },
-            quote! { panic!("out of memory") },
-        )
+fn alloc(no_std: bool) -> TokenStream {
+    let (alloc_path, handle_alloc_error) = if no_std {
+        (quote! { ::alloc::alloc::alloc }, quote! { panic!("out of memory") })
     } else {
-        (
-            quote! { ::std::boxed::Box },
-            quote! { ::std::alloc::alloc },
-            quote! { ::std::alloc::handle_alloc_error(layout) },
-        )
+        (quote! { ::std::alloc::alloc }, quote! { ::std::alloc::handle_alloc_error(layout) })
     };
 
-    let alloc = quote! {
+    quote! {
         let mem_ptr = #alloc_path(layout);
         if mem_ptr.is_null() {
             #handle_alloc_error
         }
-    };
-
-    (alloc, box_path)
+    }
 }
 
 fn alloc_zst(box_path: &TokenStream, for_trait: bool) -> TokenStream {
@@ -491,7 +497,8 @@ fn factory_for_slice_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_
 
     factory_where_clause.predicates.push(copy_bound_tokens);
 
-    let (alloc, box_path) = alloc_funcs(macro_args.no_std);
+    let alloc = alloc(macro_args.no_std);
+    let box_path = box_path(macro_args.no_std);
     let make_zst = alloc_zst(&box_path, false);
 
     let tail_layout = tail_layout(tail_elem_type, struct_info.tail_field.ty.span());
@@ -552,7 +559,8 @@ fn factory_for_slice_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_
 
 fn factory_for_iter_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_type: &Type) -> TokenStream {
     let guard_type_tokens = guard_type(macro_args);
-    let (alloc, box_path) = alloc_funcs(macro_args.no_std);
+    let alloc = alloc(macro_args.no_std);
+    let box_path = box_path(macro_args.no_std);
     let make_zst = alloc_zst(&box_path, false);
 
     let tail_layout = tail_layout(tail_type, struct_info.tail_field.ty.span());
@@ -631,8 +639,102 @@ fn factory_for_iter_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_t
     }
 }
 
+fn destructor_iterator_type(macro_args: &MacroArgs, struct_info: &StructInfo, tail_type: &Type) -> TokenStream {
+    let dealloc_path = dealloc_path(macro_args.no_std);
+
+    let visibility = &macro_args.visibility;
+    let iterator_name = macro_args
+        .iterator_name
+        .clone()
+        .unwrap_or_else(|| Ident::new(&format!("{}Iter", struct_info.struct_name), proc_macro2::Span::call_site()));
+
+    let struct_name = &struct_info.struct_name;
+    let struct_generics = &struct_info.struct_generics;
+    let (impl_generics, ty_generics, where_clause) = struct_info.struct_generics.split_for_impl();
+
+    let factory_doc = format!("Iterator type for a destructured `Box<{struct_name}>`");
+
+    quote! {
+        #[doc = #factory_doc]
+        #visibility struct #iterator_name #struct_generics #where_clause {
+            ptr: *mut #tail_type,
+            index: usize,
+            len: usize,
+
+            free_ptr: *mut u8,
+            layout: ::core::alloc::Layout,
+        }
+
+        impl #impl_generics ::core::iter::Iterator for #iterator_name #ty_generics #where_clause {
+            type Item = #tail_type;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.index >= self.len {
+                    return None;
+                }
+                #[allow(clippy::zst_offset)]
+                let value = unsafe { self.ptr.add(self.index).read() };
+                self.index += 1;
+                Some(value)
+            }
+        }
+
+        impl #impl_generics ::core::ops::Drop for #iterator_name #ty_generics #where_clause {
+            fn drop(&mut self) {
+                unsafe { #dealloc_path(self.free_ptr, self.layout) }
+            }
+        }
+    }
+}
+
+fn destructor_with_iter(macro_args: &MacroArgs, struct_info: &StructInfo) -> TokenStream {
+    let box_path = box_path(macro_args.no_std);
+
+    let header_fields = &struct_info.header_field_idents;
+    let header_types = &struct_info.header_types;
+
+    let visibility = &macro_args.visibility;
+    let destructor_name = &macro_args.base_destructor_name;
+
+    let tail_field = &struct_info.tail_field_ident;
+    let struct_name = &struct_info.struct_name;
+    let iterator_name = macro_args
+        .iterator_name
+        .clone()
+        .unwrap_or_else(|| Ident::new(&format!("{}Iter", struct_info.struct_name), proc_macro2::Span::call_site()));
+    let (_impl_generics, ty_generics, _where_clause) = struct_info.struct_generics.split_for_impl();
+
+    let factory_doc = format!("Destructures an instance of `Box<{struct_name}>`, returning the tail slice as an iterator.");
+
+    quote! {
+        #[doc = #factory_doc]
+        #visibility fn #destructor_name(
+            this: #box_path<Self>,
+        ) -> ( #( #header_types, )* #iterator_name #ty_generics)
+        {
+            let layout = ::core::alloc::Layout::for_value(&*this);
+            let len = this.#tail_field.len();
+            let this = #box_path::into_raw(this);
+            unsafe {
+                (
+                    #( (&raw mut (*this).#header_fields).read(), )*
+                    #iterator_name {
+                        ptr: (*this).#tail_field.as_mut_ptr(),
+                        index: 0,
+                        len,
+
+                        free_ptr: this.cast(),
+                        layout,
+                    }
+                )
+            }
+        }
+    }
+}
+
 fn factory_for_str_arg(macro_args: &MacroArgs, struct_info: &StructInfo) -> TokenStream {
-    let (alloc, box_path) = alloc_funcs(macro_args.no_std);
+    let alloc = alloc(macro_args.no_std);
+    let box_path = box_path(macro_args.no_std);
     let make_zst = alloc_zst(&box_path, false);
 
     let tail_layout = tail_layout(&quote! { u8 }, struct_info.tail_field.ty.span());
@@ -694,7 +796,8 @@ fn factory_for_str_arg(macro_args: &MacroArgs, struct_info: &StructInfo) -> Toke
 }
 
 fn factory_for_trait_arg(macro_args: &MacroArgs, struct_info: &StructInfo, trait_path: &Path) -> TokenStream {
-    let (alloc, box_path) = alloc_funcs(macro_args.no_std);
+    let alloc = alloc(macro_args.no_std);
+    let box_path = box_path(macro_args.no_std);
     let make_zst = alloc_zst(&box_path, true);
 
     let header_layout = header_layout(macro_args, struct_info, true);
@@ -762,10 +865,13 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
     let struct_info = StructInfo::new(&input_struct)?;
 
     let mut factories = Vec::new();
+    let mut iterator_type = None;
     match &struct_info.tail_kind {
         TailKind::Slice(elem_type) => {
             factories.push(factory_for_iter_arg(&macro_args, &struct_info, elem_type));
             factories.push(factory_for_slice_arg(&macro_args, &struct_info, elem_type));
+            factories.push(destructor_with_iter(&macro_args, &struct_info));
+            iterator_type = Some(destructor_iterator_type(&macro_args, &struct_info, elem_type));
         }
 
         TailKind::Str => {
@@ -786,6 +892,8 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
         impl #impl_generics #struct_name_ident #ty_generics #where_clause {
             #( #factories )*
         }
+
+        #iterator_type
     })
 }
 

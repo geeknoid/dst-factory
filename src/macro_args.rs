@@ -6,6 +6,9 @@ use syn::{
 
 pub struct MacroArgs {
     pub base_factory_name: Ident,
+    pub base_destructor_name: Ident,
+    /// When `None`, defaults to appending "Iter" to the type's name.
+    pub iterator_name: Option<Ident>,
     pub visibility: Visibility,
     pub no_std: bool,
     pub generic_name: Ident,
@@ -15,6 +18,8 @@ impl Default for MacroArgs {
     fn default() -> Self {
         Self {
             base_factory_name: Ident::new("build", proc_macro2::Span::call_site()),
+            base_destructor_name: Ident::new("destroy", proc_macro2::Span::call_site()),
+            iterator_name: None,
             visibility: Visibility::Inherited,
             no_std: false,
             generic_name: Ident::new("G", proc_macro2::Span::call_site()),
@@ -30,7 +35,7 @@ impl Parse for MacroArgs {
         if input.peek(syn::Ident) {
             let ahead = input.fork();
             let ident = ahead.parse::<Ident>()?;
-            if ident != "no_std" && ident != "pub" && ident != "generic" {
+            if ident != "no_std" && ident != "pub" && ident != "generic" && ident != "destructor" && ident != "iterator" {
                 result.base_factory_name = ident;
 
                 input.advance_to(&ahead);
@@ -38,6 +43,44 @@ impl Parse for MacroArgs {
                     _ = input
                         .parse::<Token![,]>()
                         .map_err(|_ignored| input.error("Expected comma after factory name"))?;
+                }
+            }
+        }
+
+        // Check for destructor = <ident>
+        if input.peek(syn::Ident) {
+            let ahead = input.fork();
+            let ident = ahead.parse::<Ident>()?;
+            if ident == "destructor" {
+                input.advance_to(&ahead);
+                _ = input.parse::<Token![=]>()?;
+                result.base_destructor_name = input
+                    .parse::<Ident>()
+                    .map_err(|_ignored| input.error("Expected identifier after `destructor=`"))?;
+                if !input.is_empty() {
+                    _ = input
+                        .parse::<Token![,]>()
+                        .map_err(|_ignored| input.error("Expected comma after destructor name"))?;
+                }
+            }
+        }
+
+        // Check for iterator = <ident>
+        if input.peek(syn::Ident) {
+            let ahead = input.fork();
+            let ident = ahead.parse::<Ident>()?;
+            if ident == "iterator" {
+                input.advance_to(&ahead);
+                _ = input.parse::<Token![=]>()?;
+                result.iterator_name = Some(
+                    input
+                        .parse::<Ident>()
+                        .map_err(|_ignored| input.error("Expected identifier after `iterator=`"))?,
+                );
+                if !input.is_empty() {
+                    _ = input
+                        .parse::<Token![,]>()
+                        .map_err(|_ignored| input.error("Expected comma after iterator name"))?;
                 }
             }
         }
