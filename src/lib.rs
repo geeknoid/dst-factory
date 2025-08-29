@@ -45,6 +45,11 @@
 //! // allocate another user, this time using an iterator
 //! let v = vec![0, 1, 2, 3, 4];
 //! let c = User::build(33, v);
+//!
+//! // destructure this user and compare its key to the vector
+//! // this has the advantage of iterating over u8, not &u8 or &mut u8.
+//! let (_age, signing_key) = User::destroy(c);
+//! assert!(signing_key.eq(v.into_iter()));
 //! ```
 //! Here's another example, this time using a string as the last field of a struct:
 //!
@@ -69,23 +74,23 @@
 //!
 //! // a trait we'll use in our DST
 //! trait NumberProducer {
-//!    fn get_number(&self) -> u32;
+//!     fn get_number(&self) -> u32;
 //! }
 //!
 //! // an implementation of the trait we're going to use
 //! struct FortyTwoProducer;
 //! impl NumberProducer for FortyTwoProducer {
-//!    fn get_number(&self) -> u32 {
-//!        42
-//!    }
+//!     fn get_number(&self) -> u32 {
+//!         42
+//!     }
 //! }
 //!
 //! // another implementation of the trait we're going to use
 //! struct TenProducer;
 //! impl NumberProducer for TenProducer {
-//!    fn get_number(&self) -> u32 {
-//!        10
-//!    }
+//!     fn get_number(&self) -> u32 {
+//!         10
+//!     }
 //! }
 //!
 //! #[make_dst_factory]
@@ -110,8 +115,8 @@
 //! # Attribute Features
 //!
 //! The common use case for the #[[`macro@make_dst_factory`]] attribute is to not pass any arguments.
-//! This results in factory functions called `build` when using a string or dynamic trait as the
-//! last field of the struct, and `build` and `build_from_slice` when using an array as the last
+//! This results in a function called `build` when using a string or dynamic trait as the
+//! last field of the struct, and the functions `build`, `build_from_slice`, and `destroy` when using an array as the last
 //! field of the struct.
 //!
 //! The generated functions are private by default and have the following signatures:
@@ -127,6 +132,8 @@
 //! where
 //!     last_field_type: Copy + Sized;
 //!
+//! fn destroy(this: Box<Self>) -> (Type1, Type2, ..., SelfIter);
+//!
 //! // for strings
 //! fn build(field1, field2, ..., last_field: impl AsRef<str>) -> Box<Self>;
 //!
@@ -141,22 +148,28 @@
 //! grammar is:
 //!
 //! ```ignore
-//! #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std] [, generic=<generic_name>])]
+//! #[make_dst_factory(<base_factory_name> [, destructor=<destructor_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, generic=<generic_name>])]
 //! ```
 //!
 //! Some examples:
 //!
 //! ```ignore
-//! // The factory functions will be private and called `create` and `create_from_slice`
+//! // The generated functions will be public and called `build`, `build_from_slice`, and `destroy`.
+//! #[make_dst_factory(pub)]
+//!
+//! // The generated functions will be private and called `create`, `create_from_slice`, and `destroy`.
 //! #[make_dst_factory(create)]
 //!
-//! // The factory functions will be public and called `create` and `create_from_slice`
+//! // The generated functions will be private and called `create`, `create_from_slice`, and `destructure`.
+//! #[make_dst_factory(create, destructor = destructure)]
+//!
+//! // The generated functions will be public and called `create`, `create_from_slice`, and `destroy`
 //! #[make_dst_factory(create, pub)]
 //!
-//! // The factory functions will be private, called `create` and `create_from_slice`, and support the `no_std` environment
+//! // The generated functions will be private, called `create`, `create_from_slice`, and `destroy`, and support the `no_std` environment
 //! #[make_dst_factory(create, no_std)]
 //!
-//! // The factory functions will be private, called `create` and `create_from_slice`,
+//! // The generated functions will be private, called `create`, `create_from_slice`, and `destroy`,
 //! // support the `no_std` environment, and will have generic types called `X`.
 //! #[make_dst_factory(create, no_std, generic=X)]
 //! ```
