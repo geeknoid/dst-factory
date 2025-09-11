@@ -652,7 +652,7 @@ fn factory_for_iter_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_t
     }
 }
 
-fn destructor_iterator_type(macro_args: &MacroArgs, struct_info: &StructInfo, tail_type: &Type) -> TokenStream {
+fn destructurer_iterator_type(macro_args: &MacroArgs, struct_info: &StructInfo, tail_type: &Type) -> TokenStream {
     let dealloc_path = dealloc_path(macro_args.no_std);
 
     let visibility = &macro_args.visibility;
@@ -700,14 +700,14 @@ fn destructor_iterator_type(macro_args: &MacroArgs, struct_info: &StructInfo, ta
     }
 }
 
-fn destructor_with_iter(macro_args: &MacroArgs, struct_info: &StructInfo) -> TokenStream {
+fn destructurer_with_iter(macro_args: &MacroArgs, struct_info: &StructInfo) -> TokenStream {
     let box_path = box_path(macro_args.no_std);
 
     let header_fields = &struct_info.header_field_idents;
     let header_types = &struct_info.header_types;
 
     let visibility = &macro_args.visibility;
-    let destructor_name = &macro_args.base_destructurer_name;
+    let destructurer_name = &macro_args.base_destructurer_name;
 
     let tail_field = &struct_info.tail_field_ident;
     let struct_name = &struct_info.struct_name;
@@ -721,7 +721,7 @@ fn destructor_with_iter(macro_args: &MacroArgs, struct_info: &StructInfo) -> Tok
 
     quote! {
         #[doc = #factory_doc]
-        #visibility fn #destructor_name(
+        #visibility fn #destructurer_name(
             this: #box_path<Self>,
         ) -> ( #( #header_types, )* #iterator_name #ty_generics)
         {
@@ -883,8 +883,8 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
         TailKind::Slice(elem_type) => {
             factories.push(factory_for_iter_arg(&macro_args, &struct_info, elem_type));
             factories.push(factory_for_slice_arg(&macro_args, &struct_info, elem_type));
-            factories.push(destructor_with_iter(&macro_args, &struct_info));
-            iterator_type = Some(destructor_iterator_type(&macro_args, &struct_info, elem_type));
+            factories.push(destructurer_with_iter(&macro_args, &struct_info));
+            iterator_type = Some(destructurer_iterator_type(&macro_args, &struct_info, elem_type));
         }
 
         TailKind::Str => {

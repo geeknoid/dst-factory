@@ -47,7 +47,7 @@ impl Parse for MacroArgs {
             }
         }
 
-        // Check for destructor = <ident>
+        // Check for destructurer = <ident>
         if input.peek(syn::Ident) {
             let ahead = input.fork();
             let ident = ahead.parse::<Ident>()?;
