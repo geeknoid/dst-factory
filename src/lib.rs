@@ -148,7 +148,7 @@
 //! grammar is:
 //!
 //! ```ignore
-//! #[make_dst_factory(<base_factory_name> [, destructor=<destructor_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, generic=<generic_name>])]
+//! #[make_dst_factory(<base_factory_name> [, destructurer=<destructurer_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, generic=<generic_name>])]
 //! ```
 //!
 //! Some examples:
