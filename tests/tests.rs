@@ -443,6 +443,44 @@ fn aligned_trait_struct() {
     assert_eq!(instance.tail.get_number(), 100);
 }
 
+#[make_dst_factory(destructurer = custom_destructure)]
+struct CustomDestructureStruct<T> {
+    id: usize,
+    elements: [T],
+}
+
+#[test]
+fn custom_destructure_usage() {
+    for i in 0..64 {
+        let v = vec!['*'; i];
+
+        let instance: Box<CustomDestructureStruct<char>> = CustomDestructureStruct::build_from_slice(i, v.as_slice());
+
+        let (id, elements_iter): (usize, CustomDestructureStructIter<char>) = CustomDestructureStruct::custom_destructure(instance);
+        assert_eq!(id, i);
+        assert!(elements_iter.eq(v));
+    }
+}
+
+#[make_dst_factory(iterator = MyIter)]
+struct CustomIteratorStruct<T> {
+    id: usize,
+    elements: [T],
+}
+
+#[test]
+fn custom_iterator_usage() {
+    for i in 0..64 {
+        let v = vec!['*'; i];
+
+        let instance: Box<CustomIteratorStruct<char>> = CustomIteratorStruct::build_from_slice(i, v.as_slice());
+
+        let (id, elements_iter): (usize, MyIter<char>) = CustomIteratorStruct::destructure(instance);
+        assert_eq!(id, i);
+        assert!(elements_iter.eq(v));
+    }
+}
+
 #[test]
 #[cfg_attr(miri, ignore)]
 fn no_std() {
