@@ -196,7 +196,6 @@
 //! Many thanks to <https://github.com/scottmcm> for his invaluable help getting the factory methods
 //! in top shape.
 
-extern crate proc_macro;
 mod macro_args;
 
 use macro_args::MacroArgs;
@@ -250,6 +249,11 @@ impl<'a> StructInfo<'a> {
         }
     }
 
+    #[expect(
+        clippy::unwrap_used,
+        clippy::unwrap_in_result,
+        reason = "fields validated non-empty above; trait object always has a trait bound"
+    )]
     fn process_fields(input_struct: &'a ItemStruct, fields: &'a Punctuated<Field, Comma>) -> SynResult<Self> {
         if fields.is_empty() {
             return Err(syn::Error::new_spanned(input_struct, "Struct must have at least one field"));
@@ -266,13 +270,13 @@ impl<'a> StructInfo<'a> {
             Type::TraitObject(type_trait_object) => {
                 // Verify that the trait object is not a higher-rank trait bound
                 for bound in &type_trait_object.bounds {
-                    if let syn::TypeParamBound::Trait(trait_bound) = bound {
-                        if trait_bound.lifetimes.is_some() {
-                            return Err(syn::Error::new_spanned(
-                                trait_bound,
-                                "Higher-rank trait bounds (e.g., `for<'a> dyn Trait<'a>`) are not supported for the tail field.",
-                            ));
-                        }
+                    if let syn::TypeParamBound::Trait(trait_bound) = bound
+                        && trait_bound.lifetimes.is_some()
+                    {
+                        return Err(syn::Error::new_spanned(
+                            trait_bound,
+                            "Higher-rank trait bounds (e.g., `for<'a> dyn Trait<'a>`) are not supported for the tail field.",
+                        ));
                     }
                 }
 
@@ -385,7 +389,7 @@ fn header_layout(macro_args: &MacroArgs, struct_info: &StructInfo, for_trait: bo
     }
 }
 
-fn tail_layout<T: quote::ToTokens>(tail_type: &T, span: Span) -> TokenStream {
+fn tail_layout<T: ToTokens>(tail_type: &T, span: Span) -> TokenStream {
     quote_spanned! { span => ::core::alloc::Layout::array::<#tail_type>(len).expect("Array exceeds maximum size allowed of isize::MAX") }
 }
 
@@ -447,7 +451,7 @@ fn header_field_writes(struct_info: &StructInfo) -> Vec<TokenStream> {
         .iter()
         .enumerate()
         .map(|(i, field_ident)| {
-            let tuple_idx = syn::Index::from(i);
+            let tuple_idx = Index::from(i);
             quote! { ::core::ptr::write_unaligned(&raw mut ((*fat_ptr).#field_ident), args.#tuple_idx);}
         })
         .collect()
@@ -659,7 +663,7 @@ fn destructurer_iterator_type(macro_args: &MacroArgs, struct_info: &StructInfo, 
     let iterator_name = macro_args
         .iterator_name
         .clone()
-        .unwrap_or_else(|| Ident::new(&format!("{}Iter", struct_info.struct_name), proc_macro2::Span::call_site()));
+        .unwrap_or_else(|| Ident::new(&format!("{}Iter", struct_info.struct_name), Span::call_site()));
 
     let struct_name = &struct_info.struct_name;
     let struct_generics = &struct_info.struct_generics;
@@ -714,7 +718,7 @@ fn destructurer_with_iter(macro_args: &MacroArgs, struct_info: &StructInfo) -> T
     let iterator_name = macro_args
         .iterator_name
         .clone()
-        .unwrap_or_else(|| Ident::new(&format!("{}Iter", struct_info.struct_name), proc_macro2::Span::call_site()));
+        .unwrap_or_else(|| Ident::new(&format!("{}Iter", struct_info.struct_name), Span::call_site()));
     let (_impl_generics, ty_generics, _where_clause) = struct_info.struct_generics.split_for_impl();
 
     let factory_doc = format!("Destructures an instance of `Box<{struct_name}>`, returning the tail slice as an iterator.");
