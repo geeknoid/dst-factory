@@ -11,6 +11,7 @@ pub struct MacroArgs {
     pub iterator_name: Option<Ident>,
     pub visibility: Visibility,
     pub no_std: bool,
+    pub deserialize: bool,
     pub generic_name: Ident,
 }
 
@@ -22,8 +23,46 @@ impl Default for MacroArgs {
             iterator_name: None,
             visibility: Visibility::Inherited,
             no_std: false,
+            deserialize: false,
             generic_name: Ident::new("G", proc_macro2::Span::call_site()),
         }
+    }
+}
+
+/// Try to consume a keyword identifier from the input, returning `true` if matched.
+fn try_consume_keyword(input: ParseStream, keyword: &str) -> SynResult<bool> {
+    if input.peek(Ident) {
+        let ahead = input.fork();
+        let ident = ahead.parse::<Ident>()?;
+        if ident == keyword {
+            input.advance_to(&ahead);
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Consume a trailing comma if the input is not empty.
+fn consume_trailing_comma(input: ParseStream, after: &str) -> SynResult<()> {
+    if !input.is_empty() {
+        _ = input
+            .parse::<Token![,]>()
+            .map_err(|_ignored| input.error(format!("Expected comma after {after}")))?;
+    }
+    Ok(())
+}
+
+/// Parse `keyword = <ident>`, returning the value identifier.
+fn parse_keyword_value(input: ParseStream, keyword: &str) -> SynResult<Option<Ident>> {
+    if try_consume_keyword(input, keyword)? {
+        _ = input.parse::<Token![=]>()?;
+        let value = input
+            .parse::<Ident>()
+            .map_err(|_ignored| input.error(format!("Expected identifier after `{keyword}=`")))?;
+        consume_trailing_comma(input, keyword)?;
+        Ok(Some(value))
+    } else {
+        Ok(None)
     }
 }
 
@@ -35,88 +74,45 @@ impl Parse for MacroArgs {
         if input.peek(Ident) {
             let ahead = input.fork();
             let ident = ahead.parse::<Ident>()?;
-            if ident != "no_std" && ident != "pub" && ident != "generic" && ident != "destructurer" && ident != "iterator" {
+            if ident != "no_std"
+                && ident != "deserialize"
+                && ident != "pub"
+                && ident != "generic"
+                && ident != "destructurer"
+                && ident != "iterator"
+            {
                 result.base_factory_name = ident;
-
                 input.advance_to(&ahead);
-                if !input.is_empty() {
-                    _ = input
-                        .parse::<Token![,]>()
-                        .map_err(|_ignored| input.error("Expected comma after factory name"))?;
-                }
+                consume_trailing_comma(input, "factory name")?;
             }
         }
 
-        // Check for destructurer = <ident>
-        if input.peek(Ident) {
-            let ahead = input.fork();
-            let ident = ahead.parse::<Ident>()?;
-            if ident == "destructurer" {
-                input.advance_to(&ahead);
-                _ = input.parse::<Token![=]>()?;
-                result.base_destructurer_name = input
-                    .parse::<Ident>()
-                    .map_err(|_ignored| input.error("Expected identifier after `destructurer=`"))?;
-                if !input.is_empty() {
-                    _ = input
-                        .parse::<Token![,]>()
-                        .map_err(|_ignored| input.error("Expected comma after destructurer name"))?;
-                }
-            }
+        if let Some(name) = parse_keyword_value(input, "destructurer")? {
+            result.base_destructurer_name = name;
         }
 
-        // Check for iterator = <ident>
-        if input.peek(Ident) {
-            let ahead = input.fork();
-            let ident = ahead.parse::<Ident>()?;
-            if ident == "iterator" {
-                input.advance_to(&ahead);
-                _ = input.parse::<Token![=]>()?;
-                result.iterator_name = Some(
-                    input
-                        .parse::<Ident>()
-                        .map_err(|_ignored| input.error("Expected identifier after `iterator=`"))?,
-                );
-                if !input.is_empty() {
-                    _ = input
-                        .parse::<Token![,]>()
-                        .map_err(|_ignored| input.error("Expected comma after iterator name"))?;
-                }
-            }
+        if let Some(name) = parse_keyword_value(input, "iterator")? {
+            result.iterator_name = Some(name);
         }
 
         // Check for visibility
         if input.peek(Token![pub]) {
             result.visibility = input.parse().map_err(|_ignored| input.error("Failed to parse visibility"))?;
-
-            if !input.is_empty() {
-                _ = input
-                    .parse::<Token![,]>()
-                    .map_err(|_ignored| input.error("Expected comma after visibility"))?;
-            }
+            consume_trailing_comma(input, "visibility")?;
         }
 
-        // Check for no_std
-        if input.peek(Ident) {
-            let ahead = input.fork();
-            let ident = ahead.parse::<Ident>()?;
-            if ident == "no_std" {
-                result.no_std = true;
-                input.advance_to(&ahead);
-            }
+        if try_consume_keyword(input, "no_std")? {
+            result.no_std = true;
+            consume_trailing_comma(input, "no_std")?;
         }
 
-        // Check for generic = <ident>
-        if input.peek(Ident) {
-            let ahead = input.fork();
-            let ident = ahead.parse::<Ident>()?;
-            if ident == "generic" {
-                input.advance_to(&ahead);
-                _ = input.parse::<Token![=]>()?;
-                result.generic_name = input
-                    .parse::<Ident>()
-                    .map_err(|_ignored| input.error("Expected identifier after `generic =`"))?;
-            }
+        if try_consume_keyword(input, "deserialize")? {
+            result.deserialize = true;
+            consume_trailing_comma(input, "deserialize")?;
+        }
+
+        if let Some(name) = parse_keyword_value(input, "generic")? {
+            result.generic_name = name;
         }
 
         if input.is_empty() {

@@ -1,0 +1,5 @@
+error: Expected comma after no_std
+ --> tests/ui/no_comma_after_no_std.rs:3:35
+  |
+3 | #[make_dst_factory(create, no_std deserialize)]
+  |                                   ^^^^^^^^^^^

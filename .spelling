@@ -1,4 +1,4 @@
-34
+38
 Acknowledgements
 boolean
 CLI
@@ -22,12 +22,16 @@ proc
 repo
 repos
 rustdoc
+Serde
+serde
+serde's
 struct
 structs
 subcommand
 toml
 TOML
 tuple
+unsized
 workflow
 workflows
 workspace

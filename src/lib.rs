@@ -148,7 +148,7 @@
 //! grammar is:
 //!
 //! ```ignore
-//! #[make_dst_factory(<base_factory_name> [, destructurer=<destructurer_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, generic=<generic_name>])]
+//! #[make_dst_factory(<base_factory_name> [, destructurer=<destructurer_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, deserialize] [, generic=<generic_name>])]
 //! ```
 //!
 //! Some examples:
@@ -181,6 +181,43 @@
 //! specification. See the Rust reference on [Type Layout](https://doc.rust-lang.org/reference/type-layout.html)
 //! for more details.
 //!
+//! # Serde Support
+//!
+//! DST structs work naturally with `#[derive(Serialize)]` from serde, since serialization
+//! only requires a reference. However, `#[derive(Deserialize)]` cannot work because the
+//! standard derive tries to construct the struct directly, which is impossible for unsized types.
+//!
+//! Passing the `deserialize` flag in the attribute generates a
+//! [`Deserialize`](https://docs.rs/serde/latest/serde/trait.Deserialize.html) implementation
+//! for `Box<T>` that uses the macro-generated factory functions to construct the struct.
+//! All standard `#[serde(...)]` field attributes (such as `rename`, `default`, `skip`, etc.)
+//! are fully supported.
+//!
+//! ```ignore
+//! use dst_factory::make_dst_factory;
+//! use serde::Serialize;
+//!
+//! #[derive(Serialize)]
+//! #[make_dst_factory(deserialize)]
+//! struct Message {
+//!     id: u32,
+//!     text: str,
+//! }
+//!
+//! // Serialize
+//! let msg = Message::build(1, "hello");
+//! let json = serde_json::to_string(&*msg).unwrap();
+//!
+//! // Deserialize
+//! let restored: Box<Message> = serde_json::from_str(&json).unwrap();
+//! assert_eq!(restored.id, 1);
+//! assert_eq!(&restored.text, "hello");
+//! ```
+//!
+//! Serde support works with both named and tuple structs, and with both `str` and `[T]`
+//! slice tails. It is not supported for `dyn Trait` tails, since there is no way to
+//! reconstruct the concrete type from serialized data.
+//!
 //! # Error Conditions
 //!
 //! The #[[`macro@make_dst_factory`]] attribute produces a compile-time error if:
@@ -190,6 +227,7 @@
 //! - The struct has no fields.
 //! - The last field of the struct is not a slice (`[T]`), a string (`str`), or a trait object (`dyn Trait`).
 //! - The resulting struct exceeds the maximum size allowed of `isize::MAX`.
+//! - The `deserialize` flag is used on a struct with a `dyn Trait` tail.
 //!
 //! # Acknowledgements
 //!
@@ -197,6 +235,7 @@
 //! in top shape.
 
 mod macro_args;
+mod serde_impls;
 
 use macro_args::MacroArgs;
 use proc_macro2::{Span, TokenStream};
@@ -353,12 +392,6 @@ fn header_layout(macro_args: &MacroArgs, struct_info: &StructInfo, for_trait: bo
 
     let header_field_types: Vec<_> = struct_info.header_fields.iter().map(|field| &field.ty).collect();
 
-    if header_field_types.is_empty() {
-        return quote! {
-            let layout = ::core::alloc::Layout::from_size_align(0, 1).unwrap();
-        };
-    }
-
     let fat_payload = if for_trait {
         quote! { vtable }
     } else {
@@ -373,6 +406,17 @@ fn header_layout(macro_args: &MacroArgs, struct_info: &StructInfo, for_trait: bo
             quote! { #generic_name }
         }
     };
+
+    if header_field_types.is_empty() {
+        return quote! {
+            let layout = unsafe {
+                let buffer = ::core::mem::MaybeUninit::<(#tail_type,)>::uninit();
+                let head_ptr: *const Self = ::core::mem::transmute((&raw const buffer, #fat_payload));
+                let align = ::core::mem::align_of_val::<Self>(&*head_ptr);
+                ::core::alloc::Layout::from_size_align_unchecked(0, align)
+            };
+        };
+    }
 
     quote! {
         let buffer = ::core::mem::MaybeUninit::<(#( #header_field_types, )* #tail_type)>::uninit();
@@ -482,12 +526,12 @@ fn alloc(no_std: bool) -> TokenStream {
 }
 
 fn alloc_zst(box_path: &TokenStream, for_trait: bool) -> TokenStream {
-    let mem_ptr = quote! { let mem_ptr = ::core::ptr::NonNull::<()>::dangling().as_ptr(); };
+    let mem_ptr = quote! { let mem_ptr = ::core::ptr::without_provenance_mut::<u8>(layout.align()); };
 
     let fat_ptr = if for_trait {
-        quote! { let fat_ptr = ::core::mem::transmute::<(*mut (), *const ()), *mut Self>((mem_ptr, vtable)); }
+        quote! { let fat_ptr = ::core::mem::transmute::<(*mut u8, *const ()), *mut Self>((mem_ptr, vtable)); }
     } else {
-        quote! { let fat_ptr = ::core::mem::transmute::<(*mut (), usize), *mut Self>((mem_ptr, 0_usize)); }
+        quote! { let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, 0_usize)); }
     };
 
     let box_from_raw = quote! { #box_path::from_raw(fat_ptr) };
@@ -900,6 +944,22 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
         }
     }
 
+    let mut serde_tokens: Option<TokenStream> = None;
+
+    if macro_args.deserialize {
+        match &struct_info.tail_kind {
+            TailKind::TraitObject(_) => {
+                return Err(syn::Error::new_spanned(
+                    &input_struct,
+                    "deserialize is not supported for DSTs with trait object tails",
+                ));
+            }
+            _ => {
+                serde_tokens = Some(serde_impls::gen_deserialize(&macro_args, &struct_info, &input_struct));
+            }
+        }
+    }
+
     let (impl_generics, ty_generics, where_clause) = struct_info.struct_generics.split_for_impl();
     let struct_name_ident = struct_info.struct_name;
 
@@ -911,6 +971,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
         }
 
         #iterator_type
+        #serde_tokens
     })
 }
 
@@ -924,7 +985,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 /// uses can pass arguments with the following grammar:
 ///
 /// ```ignore
-/// #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std] [, generic=<generic_name>])]
+/// #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std] [, deserialize] [, generic=<generic_name>])]
 /// ```
 /// Refer to the [crate-level documentation](crate) for more details and example uses.
 ///

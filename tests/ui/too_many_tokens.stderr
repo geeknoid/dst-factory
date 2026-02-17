@@ -1,5 +1,5 @@
 error: Unexpected input
- --> tests/ui/too_many_tokens.rs:3:26
+ --> tests/ui/too_many_tokens.rs:3:28
   |
 3 | #[make_dst_factory(no_std, XXX)]
-  |                          ^
+  |                            ^^^

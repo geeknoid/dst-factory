@@ -1,0 +1,5 @@
+error: Expected comma after factory name
+ --> tests/ui/no_comma_after_factory_name.rs:3:27
+  |
+3 | #[make_dst_factory(create pub)]
+  |                           ^^^

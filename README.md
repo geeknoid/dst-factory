@@ -12,6 +12,7 @@
 * [Examples](#examples)
 * [Attribute Features](#attribute-features)
 * [Other Features](#other-features)
+* [Serde Support](#serde-support)
 * [Error Conditions](#error-conditions)
 * [Acknowledgments](#acknowledgements)
 
@@ -169,7 +170,7 @@ visibility, and whether to generate code for the `no_std` environment. The gener
 grammar is:
 
 ```rust
-#[make_dst_factory(<base_factory_name> [, destructurer=<destructurer_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, generic=<generic_name>])]
+#[make_dst_factory(<base_factory_name> [, destructurer=<destructurer_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, deserialize] [, generic=<generic_name>])]
 ```
 
 Some examples:
@@ -202,6 +203,43 @@ representation or C representation (`#[repr(C)]`), with any padding and alignmen
 specification. See the Rust reference on [Type Layout](https://doc.rust-lang.org/reference/type-layout.html)
 for more details.
 
+## Serde Support
+
+DST structs work naturally with `#[derive(Serialize)]` from serde, since serialization
+only requires a reference. However, `#[derive(Deserialize)]` cannot work because the
+standard derive tries to construct the struct directly, which is impossible for unsized types.
+
+Passing the `deserialize` flag in the attribute generates a
+[`Deserialize`](https://docs.rs/serde/latest/serde/trait.Deserialize.html) implementation
+for `Box<T>` that uses the macro-generated factory functions to construct the struct.
+All standard `#[serde(...)]` field attributes (such as `rename`, `default`, `skip`, etc.)
+are fully supported.
+
+```rust
+use dst_factory::make_dst_factory;
+use serde::Serialize;
+
+#[derive(Serialize)]
+#[make_dst_factory(deserialize)]
+struct Message {
+    id: u32,
+    text: str,
+}
+
+// Serialize
+let msg = Message::build(1, "hello");
+let json = serde_json::to_string(&*msg).unwrap();
+
+// Deserialize
+let restored: Box<Message> = serde_json::from_str(&json).unwrap();
+assert_eq!(restored.id, 1);
+assert_eq!(&restored.text, "hello");
+```
+
+Serde support works with both named and tuple structs, and with both `str` and `[T]`
+slice tails. It is not supported for `dyn Trait` tails, since there is no way to
+reconstruct the concrete type from serialized data.
+
 ## Error Conditions
 
 The #[[`macro@make_dst_factory`]] attribute produces a compile-time error if:
@@ -211,6 +249,7 @@ The #[[`macro@make_dst_factory`]] attribute produces a compile-time error if:
 - The struct has no fields.
 - The last field of the struct is not a slice (`[T]`), a string (`str`), or a trait object (`dyn Trait`).
 - The resulting struct exceeds the maximum size allowed of `isize::MAX`.
+- The `deserialize` flag is used on a struct with a `dyn Trait` tail.
 
 ## Acknowledgements
 
