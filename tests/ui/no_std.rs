@@ -1,4 +1,6 @@
 
+#![allow(dead_code)]
+
 extern crate alloc;
 
 use dst_factory::make_dst_factory;

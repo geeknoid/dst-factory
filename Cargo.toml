@@ -1,7 +1,7 @@
 [package]
-resolver = "3"
+resolver = "2"
 name = "dst-factory"
-version = "0.3.0"
+version = "0.4.0"
 description = "Macro to implement C's flexible array members in Rust"
 categories = ["memory-management", "no-std"]
 keywords = ["memory", "no-std", "ffi", "dst"]
@@ -10,7 +10,7 @@ authors = ["Martin Taillefer <martin@taillefer.org>"]
 license = "MIT"
 readme = "README.md"
 edition = "2024"
-rust-version = "1.87.0"
+rust-version = "1.90.0"
 
 [lib]
 name = "dst_factory"
@@ -18,12 +18,12 @@ path = "src/lib.rs"
 proc-macro = true
 
 [dependencies]
-syn = { version = "2.0.101", features = ["full", "clone-impls", "parsing", "printing"], default-features = false }
-quote = "1.0.40"
-proc-macro2 = "1.0.95"
+proc-macro2 = { version = "1.0.106", default-features = false, features = ["proc-macro"] }
+quote = { version = "1.0.44", default-features = false, features = ["proc-macro"] }
+syn = { version = "2.0.116", default-features = false, features = ["full", "clone-impls", "parsing", "printing"] }
 
 [dev-dependencies]
-trybuild = "1.0.105"
+trybuild = { version = "1.0.116", default-features = false, features = ["diff"] }
 
 [lints.rust]
 ambiguous_negative_literals = "warn"
@@ -33,42 +33,70 @@ redundant_lifetimes = "warn"
 single_use_lifetimes = "warn"
 trivial_numeric_casts = "warn"
 unsafe_op_in_unsafe_fn = "warn"
+unused_extern_crates = "warn"
+unused_import_braces = "warn"
 unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+unused_qualifications = "warn"
 unused_results = "warn"
 
+# Allow cfg attributes for coverage builds
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
+
 [lints.clippy]
-pedantic = { level = "warn", priority = -1 }
-correctness = { level = "warn", priority = -1 }
-complexity = { level = "warn", priority = -1 }
-perf = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
-suspicious = { level = "warn", priority = -1 }
 
 # Explicitly enabled lints from the `restriction` group.
+alloc_instead_of_core = "warn"
+allow_attributes = "warn"
 allow_attributes_without_reason = "warn"
-as_pointer_underscore = "warn"
 assertions_on_result_states = "warn"
+as_underscore = "warn"
+as_pointer_underscore = "warn"
 clone_on_ref_ptr = "warn"
 deref_by_slicing = "warn"
 disallowed_script_idents = "warn"
 empty_drop = "warn"
 empty_enum_variants_with_brackets = "warn"
 empty_structs_with_brackets = "warn"
+filetype_is_file = "warn"
 fn_to_numeric_cast_any = "warn"
+get_unwrap = "warn"
 if_then_some_else_none = "warn"
+infinite_loop = "warn"
 map_err_ignore = "warn"
+missing_asserts_for_indexing = "warn"
 multiple_unsafe_ops_per_block = "warn"
+mutex_atomic = "warn"
+mutex_integer = "warn"
+needless_raw_strings = "warn"
+panic = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
 redundant_type_annotations = "warn"
 renamed_function_params = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+return_and_then = "warn"
 semicolon_outside_block = "warn"
-string_to_string = "warn"
+std_instead_of_core = "warn"
+string_lit_chars_any = "warn"
+string_slice = "warn"
+suspicious_xor_used_as_pow = "warn"
+try_err = "warn"
 undocumented_unsafe_blocks = "warn"
 unnecessary_safety_comment = "warn"
 unnecessary_safety_doc = "warn"
+unnecessary_self_imports = "warn"
 unneeded_field_pattern = "warn"
 unused_result_ok = "warn"
+unwrap_in_result = "warn"
+unwrap_used = "warn"
 
 [profile.mutants]
 inherits = "test"

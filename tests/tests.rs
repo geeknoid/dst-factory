@@ -1,6 +1,6 @@
+use core::fmt::Debug;
+use core::ptr::read_unaligned;
 use dst_factory::make_dst_factory;
-use std::fmt::Debug;
-use std::ptr::read_unaligned;
 
 #[make_dst_factory(basic_str_builder)]
 struct BasicStrStruct {
@@ -38,7 +38,7 @@ fn basic_tuple_usage() {
 #[make_dst_factory]
 struct LongFormStrStruct {
     id: usize,
-    text_data: std::primitive::str,
+    text_data: str,
 }
 
 #[test]
@@ -77,8 +77,8 @@ fn basic_slice_usage() {
 
 #[make_dst_factory(create_publicly, pub)]
 struct PublicBuilderStruct {
-    code: std::primitive::u16,
-    message: std::primitive::str,
+    code: u16,
+    message: str,
 }
 
 #[test]
@@ -218,7 +218,7 @@ fn complex_fields_before_dst() {
 #[make_dst_factory(build_where_clause)]
 struct WhereClauseStruct<T>
 where
-    T: Copy + Default + PartialEq + std::fmt::Debug,
+    T: Copy + Default + PartialEq + Debug,
 {
     fixed_item: T,
     variable_items: [T],

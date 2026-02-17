@@ -32,7 +32,7 @@ impl Parse for MacroArgs {
         let mut result = Self::default();
 
         // Check for factory name
-        if input.peek(syn::Ident) {
+        if input.peek(Ident) {
             let ahead = input.fork();
             let ident = ahead.parse::<Ident>()?;
             if ident != "no_std" && ident != "pub" && ident != "generic" && ident != "destructurer" && ident != "iterator" {
@@ -48,7 +48,7 @@ impl Parse for MacroArgs {
         }
 
         // Check for destructurer = <ident>
-        if input.peek(syn::Ident) {
+        if input.peek(Ident) {
             let ahead = input.fork();
             let ident = ahead.parse::<Ident>()?;
             if ident == "destructurer" {
@@ -66,7 +66,7 @@ impl Parse for MacroArgs {
         }
 
         // Check for iterator = <ident>
-        if input.peek(syn::Ident) {
+        if input.peek(Ident) {
             let ahead = input.fork();
             let ident = ahead.parse::<Ident>()?;
             if ident == "iterator" {
@@ -97,7 +97,7 @@ impl Parse for MacroArgs {
         }
 
         // Check for no_std
-        if input.peek(syn::Ident) {
+        if input.peek(Ident) {
             let ahead = input.fork();
             let ident = ahead.parse::<Ident>()?;
             if ident == "no_std" {
@@ -107,7 +107,7 @@ impl Parse for MacroArgs {
         }
 
         // Check for generic = <ident>
-        if input.peek(syn::Ident) {
+        if input.peek(Ident) {
             let ahead = input.fork();
             let ident = ahead.parse::<Ident>()?;
             if ident == "generic" {
