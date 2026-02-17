@@ -1,0 +1,5 @@
+error: Expected comma after destructurer
+ --> tests/ui/no_comma_after_destructurer.rs:3:44
+  |
+3 | #[make_dst_factory(destructurer = my_destr pub)]
+  |                                            ^^^

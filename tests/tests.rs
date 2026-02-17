@@ -504,4 +504,317 @@ fn error_paths() {
     t.compile_fail("tests/ui/bad_str.rs");
     t.compile_fail("tests/ui/higher_rank_trait.rs");
     t.compile_fail("tests/ui/unit_struct.rs");
+    t.compile_fail("tests/ui/deserialize_trait_object.rs");
+    t.compile_fail("tests/ui/no_comma_after_deserialize.rs");
+    t.compile_fail("tests/ui/no_comma_after_no_std.rs");
+    t.compile_fail("tests/ui/no_comma_after_factory_name.rs");
+    t.compile_fail("tests/ui/no_comma_after_destructurer.rs");
+    t.compile_fail("tests/ui/no_comma_after_iterator.rs");
+}
+
+// --- Serde tests ---
+
+mod serde_tests {
+    use dst_factory::make_dst_factory;
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    #[make_dst_factory(deserialize)]
+    struct SerdeStr {
+        id: u32,
+        message: str,
+    }
+
+    #[derive(Serialize)]
+    #[make_dst_factory(deserialize)]
+    struct SerdeSlice {
+        tag: u16,
+        values: [f32],
+    }
+
+    #[derive(Serialize)]
+    #[make_dst_factory(build_serde, deserialize)]
+    struct SerdeTuple(u32, str);
+
+    #[test]
+    fn serde_str_round_trip() {
+        let original: Box<SerdeStr> = SerdeStr::build(42, "hello world");
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeStr> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(original.id, deserialized.id);
+        assert_eq!(&original.message, &deserialized.message);
+    }
+
+    #[test]
+    fn serde_slice_round_trip() {
+        let original: Box<SerdeSlice> = SerdeSlice::build_from_slice(7, &[1.0, 2.5, 3.7, 4.0]);
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeSlice> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(original.tag, deserialized.tag);
+        assert_eq!(&original.values, &deserialized.values);
+    }
+
+    #[test]
+    fn serde_empty_str() {
+        let original: Box<SerdeStr> = SerdeStr::build(0, "");
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeStr> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(original.id, deserialized.id);
+        assert_eq!(&original.message, &deserialized.message);
+    }
+
+    #[test]
+    fn serde_empty_slice() {
+        let original: Box<SerdeSlice> = SerdeSlice::build_from_slice(0, &[]);
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeSlice> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(original.tag, deserialized.tag);
+        assert!(deserialized.values.is_empty());
+    }
+
+    #[test]
+    fn serde_tuple_round_trip() {
+        let original: Box<SerdeTuple> = SerdeTuple::build_serde(99, "abc");
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeTuple> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(original.0, deserialized.0);
+        assert_eq!(&original.1, &deserialized.1);
+    }
+
+    #[test]
+    fn serde_json_structure() {
+        let instance: Box<SerdeStr> = SerdeStr::build(123, "test");
+        let json = serde_json::to_string(&*instance).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["id"], 123);
+        assert_eq!(v["message"], "test");
+    }
+
+    // --- Field attribute preservation tests ---
+
+    #[derive(Serialize)]
+    #[make_dst_factory(deserialize)]
+    struct SerdeRenamedFields {
+        #[serde(rename = "identifier")]
+        id: u32,
+        #[serde(rename = "msg")]
+        message: str,
+    }
+
+    #[test]
+    fn serde_rename_fields() {
+        let original: Box<SerdeRenamedFields> = SerdeRenamedFields::build(10, "renamed");
+        let json = serde_json::to_string(&*original).unwrap();
+
+        // Verify serialization uses renamed keys
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["identifier"], 10);
+        assert_eq!(v["msg"], "renamed");
+
+        // Verify deserialization works with renamed keys
+        let deserialized: Box<SerdeRenamedFields> = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, 10);
+        assert_eq!(&deserialized.message, "renamed");
+    }
+
+    #[test]
+    fn serde_rename_from_raw_json() {
+        let json = r#"{"identifier": 55, "msg": "from_raw"}"#;
+        let deserialized: Box<SerdeRenamedFields> = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.id, 55);
+        assert_eq!(&deserialized.message, "from_raw");
+    }
+
+    #[derive(Serialize)]
+    #[make_dst_factory(deserialize)]
+    struct SerdeDefaultField {
+        #[serde(default)]
+        priority: u32,
+        content: str,
+    }
+
+    #[test]
+    fn serde_default_field() {
+        // Deserialize JSON missing the `priority` field — should use default (0)
+        let json = r#"{"content": "no priority"}"#;
+        let deserialized: Box<SerdeDefaultField> = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.priority, 0);
+        assert_eq!(&deserialized.content, "no priority");
+    }
+
+    #[test]
+    fn serde_default_field_with_value() {
+        let json = r#"{"priority": 5, "content": "has priority"}"#;
+        let deserialized: Box<SerdeDefaultField> = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.priority, 5);
+        assert_eq!(&deserialized.content, "has priority");
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    #[make_dst_factory(deserialize)]
+    struct SerdeRenameAll {
+        user_name: String,
+        display_text: str,
+    }
+
+    #[test]
+    fn serde_rename_all() {
+        let original: Box<SerdeRenameAll> = SerdeRenameAll::build("Alice".to_string(), "Hello");
+        let json = serde_json::to_string(&*original).unwrap();
+
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["userName"], "Alice");
+        assert_eq!(v["displayText"], "Hello");
+
+        let deserialized: Box<SerdeRenameAll> = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.user_name, "Alice");
+        assert_eq!(&deserialized.display_text, "Hello");
+    }
+
+    // --- Only-DST-field tests ---
+
+    #[derive(Serialize)]
+    #[make_dst_factory(deserialize)]
+    struct SerdeOnlyStr {
+        content: str,
+    }
+
+    #[test]
+    fn serde_only_str_field() {
+        let original: Box<SerdeOnlyStr> = SerdeOnlyStr::build("only field");
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeOnlyStr> = serde_json::from_str(&json).unwrap();
+        assert_eq!(&original.content, &deserialized.content);
+    }
+
+    #[test]
+    fn serde_only_str_field_empty() {
+        let original: Box<SerdeOnlyStr> = SerdeOnlyStr::build("");
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeOnlyStr> = serde_json::from_str(&json).unwrap();
+        assert_eq!(&deserialized.content, "");
+    }
+
+    #[derive(Serialize)]
+    #[make_dst_factory(deserialize)]
+    struct SerdeOnlySlice {
+        items: [u16],
+    }
+
+    #[test]
+    fn serde_only_slice_field() {
+        let original: Box<SerdeOnlySlice> = SerdeOnlySlice::build_from_slice(&[100, 200, 300]);
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeOnlySlice> = serde_json::from_str(&json).unwrap();
+        assert_eq!(&original.items, &deserialized.items);
+    }
+
+    #[test]
+    fn serde_only_slice_field_empty() {
+        let original: Box<SerdeOnlySlice> = SerdeOnlySlice::build_from_slice(&[]);
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeOnlySlice> = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.items.is_empty());
+    }
+
+    #[derive(Serialize)]
+    #[make_dst_factory(build_only_tuple, deserialize)]
+    struct SerdeOnlyTupleStr(str);
+
+    #[test]
+    fn serde_only_tuple_str_field() {
+        let original: Box<SerdeOnlyTupleStr> = SerdeOnlyTupleStr::build_only_tuple("tuple only");
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeOnlyTupleStr> = serde_json::from_str(&json).unwrap();
+        assert_eq!(&original.0, &deserialized.0);
+    }
+
+    #[derive(Serialize)]
+    #[make_dst_factory(build_only_tuple_slice, deserialize)]
+    struct SerdeOnlyTupleSlice([i32]);
+
+    #[test]
+    fn serde_only_tuple_slice_field() {
+        let original: Box<SerdeOnlyTupleSlice> = SerdeOnlyTupleSlice::build_only_tuple_slice_from_slice(&[1, -2, 3]);
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeOnlyTupleSlice> = serde_json::from_str(&json).unwrap();
+        assert_eq!(&original.0, &deserialized.0);
+    }
+
+    // --- Slice with renamed fields ---
+
+    #[derive(Serialize)]
+    #[make_dst_factory(deserialize)]
+    struct SerdeSliceRenamed {
+        #[serde(rename = "count")]
+        tag: u16,
+        #[serde(rename = "data")]
+        values: [f32],
+    }
+
+    #[test]
+    fn serde_slice_renamed() {
+        let json = r#"{"count": 3, "data": [1.0, 2.0]}"#;
+        let deserialized: Box<SerdeSliceRenamed> = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.tag, 3);
+        assert_eq!(&deserialized.values, &[1.0, 2.0]);
+    }
+
+    // --- Tuple slice with serde ---
+
+    #[derive(Serialize)]
+    #[make_dst_factory(build_tuple_slice, deserialize)]
+    struct SerdeTupleSlice(u32, [f64]);
+
+    #[test]
+    fn serde_tuple_slice_round_trip() {
+        let original: Box<SerdeTupleSlice> = SerdeTupleSlice::build_tuple_slice_from_slice(77, &[1.1, 2.2, 3.3]);
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeTupleSlice> = serde_json::from_str(&json).unwrap();
+        assert_eq!(original.0, deserialized.0);
+        assert_eq!(&original.1, &deserialized.1);
+    }
+
+    // --- Deserialize with custom factory name ---
+
+    #[derive(Serialize)]
+    #[make_dst_factory(create, deserialize)]
+    struct SerdeCustomFactory {
+        id: u32,
+        name: str,
+    }
+
+    #[test]
+    fn serde_custom_factory_name() {
+        let original: Box<SerdeCustomFactory> = SerdeCustomFactory::create(1, "custom");
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeCustomFactory> = serde_json::from_str(&json).unwrap();
+        assert_eq!(original.id, deserialized.id);
+        assert_eq!(&original.name, &deserialized.name);
+    }
+
+    // --- Deserialize with custom factory name for slice ---
+
+    #[derive(Serialize)]
+    #[make_dst_factory(make, deserialize)]
+    struct SerdeCustomSliceFactory {
+        tag: u8,
+        data: [u32],
+    }
+
+    #[test]
+    fn serde_custom_slice_factory_name() {
+        let original: Box<SerdeCustomSliceFactory> = SerdeCustomSliceFactory::make_from_slice(5, &[10, 20, 30]);
+        let json = serde_json::to_string(&*original).unwrap();
+        let deserialized: Box<SerdeCustomSliceFactory> = serde_json::from_str(&json).unwrap();
+        assert_eq!(original.tag, deserialized.tag);
+        assert_eq!(&original.data, &deserialized.data);
+    }
 }

@@ -2,6 +2,7 @@
 
 ## 0.4.0 - 2026-02-17
 
+- Added support for serde deserialization
 - Update MSRV and use latest dependencies
 - Revamp CI stuff to be more thorough
 

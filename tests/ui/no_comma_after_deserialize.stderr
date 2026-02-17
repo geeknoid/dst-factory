@@ -1,0 +1,5 @@
+error: Expected comma after deserialize
+ --> tests/ui/no_comma_after_deserialize.rs:3:40
+  |
+3 | #[make_dst_factory(create, deserialize no_std)]
+  |                                        ^^^^^^

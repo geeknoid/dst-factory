@@ -1,0 +1,5 @@
+error: Expected comma after iterator
+ --> tests/ui/no_comma_after_iterator.rs:3:38
+  |
+3 | #[make_dst_factory(iterator = MyIter pub)]
+  |                                      ^^^
