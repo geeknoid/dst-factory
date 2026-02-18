@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 - 2026-02-18
+
+- Fixed soundness bug: trait object factory now correctly `mem::forget`s the source value after copying into the DST, preventing double-free when the concrete type owns heap data
+- Fixed destructurer iterator `Drop` to drop remaining un-yielded elements before deallocating, preventing resource leaks when the iterator is not fully consumed
+- Fixed `std::mem::forget` to `core::mem::forget` for `no_std` compatibility
+- Replaced `addr_of_mut!` macro with `&raw mut` syntax for consistency with Rust 2024 edition
+- Added `ExactSizeIterator` implementation for the destructurer iterator
+- Added `Debug` implementation for the destructurer iterator
+- Added opt-in `clone` flag that generates a `Clone` implementation for `Box<T>` (supported for `str` and `[T]` tails, not `dyn Trait`)
+
 ## 0.4.0 - 2026-02-17
 
 - Added support for serde deserialization

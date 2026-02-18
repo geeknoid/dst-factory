@@ -510,6 +510,168 @@ fn error_paths() {
     t.compile_fail("tests/ui/no_comma_after_factory_name.rs");
     t.compile_fail("tests/ui/no_comma_after_destructurer.rs");
     t.compile_fail("tests/ui/no_comma_after_iterator.rs");
+    t.compile_fail("tests/ui/clone_trait_object.rs");
+    t.compile_fail("tests/ui/no_comma_after_clone.rs");
+}
+
+// --- Clone tests ---
+
+#[make_dst_factory(clone)]
+struct CloneableStr {
+    id: u32,
+    text: str,
+}
+
+#[test]
+fn clone_str_dst() {
+    let original: Box<CloneableStr> = CloneableStr::build(42, "hello clone");
+    let cloned = original.clone();
+
+    assert_eq!(original.id, cloned.id);
+    assert_eq!(&original.text, &cloned.text);
+}
+
+#[make_dst_factory(clone)]
+struct CloneableSlice {
+    tag: u16,
+    values: [f32],
+}
+
+#[test]
+fn clone_slice_dst() {
+    let original: Box<CloneableSlice> = CloneableSlice::build_from_slice(7, &[1.0, 2.5, 3.7]);
+    let cloned = original.clone();
+
+    assert_eq!(original.tag, cloned.tag);
+    assert_eq!(&original.values, &cloned.values);
+}
+
+#[make_dst_factory(clone)]
+struct CloneableSliceGeneric<T> {
+    id: usize,
+    items: [T],
+}
+
+#[test]
+fn clone_generic_slice_dst() {
+    let original: Box<CloneableSliceGeneric<String>> = CloneableSliceGeneric::build(1, vec!["a".to_string(), "b".to_string()]);
+    let cloned = original.clone();
+
+    assert_eq!(original.id, cloned.id);
+    assert_eq!(&original.items, &cloned.items);
+}
+
+#[make_dst_factory(clone)]
+struct CloneableOnlyStr {
+    content: str,
+}
+
+#[test]
+fn clone_only_str_field() {
+    let original: Box<CloneableOnlyStr> = CloneableOnlyStr::build("only");
+    let cloned = original.clone();
+    assert_eq!(&original.content, &cloned.content);
+}
+
+#[make_dst_factory(clone)]
+struct CloneableOnlySlice {
+    items: [u32],
+}
+
+#[test]
+fn clone_only_slice_field() {
+    let original: Box<CloneableOnlySlice> = CloneableOnlySlice::build_from_slice(&[10, 20, 30]);
+    let cloned = original.clone();
+    assert_eq!(&original.items, &cloned.items);
+}
+
+// --- ExactSizeIterator and Debug tests ---
+
+#[test]
+fn destructurer_exact_size_iterator() {
+    let instance: Box<BasicSliceStruct<char>> = BasicSliceStruct::basic_slice_builder_from_slice(0, &['a', 'b', 'c']);
+    let (_, iter): (usize, IterForBasicSlice<char>) = BasicSliceStruct::basic_slice_destructure(instance);
+
+    assert_eq!(iter.len(), 3);
+}
+
+#[test]
+fn destructurer_exact_size_iterator_decrements() {
+    let instance: Box<BasicSliceStruct<char>> = BasicSliceStruct::basic_slice_builder_from_slice(0, &['a', 'b', 'c']);
+    let (_, mut iter): (usize, IterForBasicSlice<char>) = BasicSliceStruct::basic_slice_destructure(instance);
+
+    assert_eq!(iter.len(), 3);
+    let _ = iter.next();
+    assert_eq!(iter.len(), 2);
+    let _ = iter.next();
+    assert_eq!(iter.len(), 1);
+    let _ = iter.next();
+    assert_eq!(iter.len(), 0);
+}
+
+#[test]
+fn destructurer_debug_impl() {
+    let instance: Box<BasicSliceStruct<char>> = BasicSliceStruct::basic_slice_builder_from_slice(0, &['a', 'b']);
+    let (_, iter): (usize, IterForBasicSlice<char>) = BasicSliceStruct::basic_slice_destructure(instance);
+
+    let debug_str = format!("{iter:?}");
+    assert!(debug_str.contains("IterForBasicSlice"));
+    assert!(debug_str.contains("index"));
+    assert!(debug_str.contains("len"));
+}
+
+// --- Iterator drop safety test ---
+// NOTE: DropSliceStruct lives in test_drop_iter.rs to avoid
+// trybuild interaction with non-Copy slice tails.
+
+// --- Trait object with Drop impl (verifies mem::forget fix) ---
+
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+static TRAIT_DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+trait Greeter {
+    fn greet(&self) -> &'static str;
+}
+
+struct HelloGreeter {
+    _data: String,
+}
+
+impl Greeter for HelloGreeter {
+    fn greet(&self) -> &'static str {
+        "hello"
+    }
+}
+
+impl Drop for HelloGreeter {
+    fn drop(&mut self) {
+        let _ = TRAIT_DROP_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[make_dst_factory]
+struct GreeterNode {
+    id: u32,
+    greeter: dyn Greeter,
+}
+
+#[test]
+fn trait_object_with_drop_impl() {
+    TRAIT_DROP_COUNT.store(0, Ordering::Relaxed);
+
+    {
+        let instance: Box<GreeterNode> = GreeterNode::build(
+            1,
+            HelloGreeter {
+                _data: "heap data".to_string(),
+            },
+        );
+        assert_eq!(instance.greeter.greet(), "hello");
+        // instance drops here — should drop exactly once
+    }
+
+    assert_eq!(TRAIT_DROP_COUNT.load(Ordering::Relaxed), 1);
 }
 
 // --- Serde tests ---
