@@ -1,4 +1,4 @@
-//! Rich support to safely create instance of [Dynamically Sized Types](https://doc.rust-lang.org/reference/dynamically-sized-types.html).
+//! Rich support to safely create instances of [Dynamically Sized Types](https://doc.rust-lang.org/reference/dynamically-sized-types.html).
 //!
 //! This crate lets you allocate variable data inline at the end of a struct. If you have a
 //! struct that gets allocated on the heap and has some variable-length data associated with it
@@ -317,7 +317,6 @@ impl<'a> StructInfo<'a> {
 
     #[expect(
         clippy::unwrap_used,
-        clippy::unwrap_in_result,
         reason = "fields validated non-empty above; trait object always has a trait bound"
     )]
     fn process_fields(input_struct: &'a ItemStruct, fields: &'a Punctuated<Field, Comma>) -> SynResult<Self> {
@@ -971,7 +970,12 @@ fn factory_for_trait_arg(macro_args: &MacroArgs, struct_info: &StructInfo, trait
     }
 }
 
-fn gen_clone(macro_args: &MacroArgs, struct_info: &StructInfo) -> TokenStream {
+enum CloneTailKind<'a> {
+    Slice(&'a Type),
+    Str,
+}
+
+fn gen_clone(macro_args: &MacroArgs, struct_info: &StructInfo, clone_tail: &CloneTailKind) -> TokenStream {
     let struct_name = struct_info.struct_name;
     let box_path = box_path(macro_args.no_std);
     let factory_name = &macro_args.base_factory_name;
@@ -984,20 +988,15 @@ fn gen_clone(macro_args: &MacroArgs, struct_info: &StructInfo) -> TokenStream {
 
     let tail_ident = &struct_info.tail_field_ident;
 
-    let (factory_call, extra_bounds) = match &struct_info.tail_kind {
-        TailKind::Slice(elem_type) => (
+    let (factory_call, extra_bounds) = match clone_tail {
+        CloneTailKind::Slice(elem_type) => (
             quote! { #struct_name::#factory_name(#( #header_accesses, )* self.#tail_ident.iter().cloned()) },
             vec![quote! { #elem_type: ::core::clone::Clone }],
         ),
-        TailKind::Str => (
+        CloneTailKind::Str => (
             quote! { #struct_name::#factory_name(#( #header_accesses, )* &self.#tail_ident) },
             vec![],
         ),
-        TailKind::TraitObject(_) => {
-            return quote! {
-                ::core::compile_error!("clone is not supported for DSTs with trait object tails");
-            };
-        }
     };
 
     // Build where clause with Clone bounds for header fields
@@ -1072,8 +1071,24 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
                     "deserialize is not supported for DSTs with trait object tails",
                 ));
             }
-            _ => {
-                serde_tokens = Some(serde_impls::gen_deserialize(&macro_args, &struct_info, &input_struct));
+            TailKind::Slice(elem_type) => {
+                let owned_tail_type: Type = syn::parse_quote! { ::std::vec::Vec<#elem_type> };
+                let factory_name = format_ident!("{}_from_slice", &macro_args.base_factory_name);
+                serde_tokens = Some(serde_impls::gen_deserialize(
+                    &struct_info,
+                    &input_struct,
+                    &owned_tail_type,
+                    &factory_name,
+                ));
+            }
+            TailKind::Str => {
+                let owned_tail_type: Type = syn::parse_quote! { ::std::string::String };
+                serde_tokens = Some(serde_impls::gen_deserialize(
+                    &struct_info,
+                    &input_struct,
+                    &owned_tail_type,
+                    &macro_args.base_factory_name,
+                ));
             }
         }
     }
@@ -1086,8 +1101,11 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
                     "clone is not supported for DSTs with trait object tails",
                 ));
             }
-            _ => {
-                clone_tokens = Some(gen_clone(&macro_args, &struct_info));
+            TailKind::Slice(elem_type) => {
+                clone_tokens = Some(gen_clone(&macro_args, &struct_info, &CloneTailKind::Slice(elem_type)));
+            }
+            TailKind::Str => {
+                clone_tokens = Some(gen_clone(&macro_args, &struct_info, &CloneTailKind::Str));
             }
         }
     }

@@ -20,7 +20,7 @@
 
 <!-- cargo-rdme start -->
 
-Rich support to safely create instance of [Dynamically Sized Types](https://doc.rust-lang.org/reference/dynamically-sized-types.html).
+Rich support to safely create instances of [Dynamically Sized Types](https://doc.rust-lang.org/reference/dynamically-sized-types.html).
 
 This crate lets you allocate variable data inline at the end of a struct. If you have a
 struct that gets allocated on the heap and has some variable-length data associated with it

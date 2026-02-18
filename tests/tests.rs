@@ -53,6 +53,25 @@ fn long_form_str_usage() {
     }
 }
 
+mod qualified_str_test {
+    #![expect(unused_qualifications, reason = "testing fully-qualified str path")]
+
+    use dst_factory::make_dst_factory;
+
+    #[make_dst_factory]
+    struct QualifiedStrStruct {
+        id: usize,
+        text_data: core::primitive::str,
+    }
+
+    #[test]
+    fn qualified_str_usage() {
+        let instance: Box<QualifiedStrStruct> = QualifiedStrStruct::build(42, "qualified");
+        assert_eq!(instance.id, 42);
+        assert_eq!(&instance.text_data, "qualified");
+    }
+}
+
 #[make_dst_factory(basic_slice_builder, destructurer = basic_slice_destructure, iterator = IterForBasicSlice, generic = M)]
 struct BasicSliceStruct<T> {
     id: usize,
@@ -374,6 +393,19 @@ fn dst_with_trait_object() {
     // allocate an instance with another implementation of the trait
     let b = Node::build(33, TenProducer {});
     assert_eq!(10, b.producer.get_number());
+}
+
+#[make_dst_factory]
+struct LifetimeBoundNode {
+    count: u32,
+    producer: dyn 'static + NumberProducer,
+}
+
+#[test]
+fn dst_with_lifetime_bound_trait_object() {
+    let a = LifetimeBoundNode::build(5, FortyTwoProducer {});
+    assert_eq!(42, a.producer.get_number());
+    assert_eq!(5, a.count);
 }
 
 #[make_dst_factory]
