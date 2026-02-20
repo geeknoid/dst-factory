@@ -20,7 +20,7 @@
 
 <!-- cargo-rdme start -->
 
-C-like [flexible array members](https://en.wikipedia.org/wiki/Flexible_array_member) for Rust.
+Rich support to safely create instances of [Dynamically Sized Types](https://doc.rust-lang.org/reference/dynamically-sized-types.html).
 
 This crate lets you allocate variable data inline at the end of a struct. If you have a
 struct that gets allocated on the heap and has some variable-length data associated with it
@@ -170,7 +170,7 @@ visibility, and whether to generate code for the `no_std` environment. The gener
 grammar is:
 
 ```rust
-#[make_dst_factory(<base_factory_name> [, destructurer=<destructurer_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, deserialize] [, generic=<generic_name>])]
+#[make_dst_factory(<base_factory_name> [, destructurer=<destructurer_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, deserialize] [, clone] [, generic=<generic_name>])]
 ```
 
 Some examples:
@@ -250,6 +250,33 @@ The #[[`macro@make_dst_factory`]] attribute produces a compile-time error if:
 - The last field of the struct is not a slice (`[T]`), a string (`str`), or a trait object (`dyn Trait`).
 - The resulting struct exceeds the maximum size allowed of `isize::MAX`.
 - The `deserialize` flag is used on a struct with a `dyn Trait` tail.
+- The `clone` flag is used on a struct with a `dyn Trait` tail.
+
+## Clone Support
+
+Because DST structs are unsized, `#[derive(Clone)]` cannot work for `Box<T>` since the
+standard derive doesn't know how to reconstruct the struct. Passing the `clone` flag in
+the attribute generates a `Clone` implementation for `Box<T>` that uses the macro-generated
+factory functions to create a deep copy.
+
+```rust
+use dst_factory::make_dst_factory;
+
+#[make_dst_factory(clone)]
+struct Message {
+    id: u32,
+    text: str,
+}
+
+let msg = Message::build(1, "hello");
+let cloned = msg.clone();
+assert_eq!(cloned.id, 1);
+assert_eq!(&cloned.text, "hello");
+```
+
+Clone support works with both named and tuple structs, and with both `str` and `[T]`
+slice tails. It is not supported for `dyn Trait` tails, since there is no way to
+clone the concrete type through a trait object reference.
 
 ## Acknowledgements
 

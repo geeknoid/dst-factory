@@ -1,0 +1,5 @@
+error: Expected comma after clone
+ --> tests/ui/no_comma_after_clone.rs:3:34
+  |
+3 | #[make_dst_factory(create, clone no_std)]
+  |                                  ^^^^^^

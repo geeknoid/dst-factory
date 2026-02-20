@@ -1,8 +1,8 @@
 [package]
 resolver = "2"
 name = "dst-factory"
-version = "0.4.0"
-description = "Macro to implement C's flexible array members in Rust"
+version = "0.5.0"
+description = "Rich support to safely create instances of Rust's Dynamically Sized Types"
 categories = ["memory-management", "no-std"]
 keywords = ["memory", "no-std", "ffi", "dst"]
 repository = "https://github.com/geeknoid/dst-factory"

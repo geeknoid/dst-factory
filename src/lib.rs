@@ -1,4 +1,4 @@
-//! C-like [flexible array members](https://en.wikipedia.org/wiki/Flexible_array_member) for Rust.
+//! Rich support to safely create instances of [Dynamically Sized Types](https://doc.rust-lang.org/reference/dynamically-sized-types.html).
 //!
 //! This crate lets you allocate variable data inline at the end of a struct. If you have a
 //! struct that gets allocated on the heap and has some variable-length data associated with it
@@ -148,7 +148,7 @@
 //! grammar is:
 //!
 //! ```ignore
-//! #[make_dst_factory(<base_factory_name> [, destructurer=<destructurer_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, deserialize] [, generic=<generic_name>])]
+//! #[make_dst_factory(<base_factory_name> [, destructurer=<destructurer_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, deserialize] [, clone] [, generic=<generic_name>])]
 //! ```
 //!
 //! Some examples:
@@ -228,6 +228,33 @@
 //! - The last field of the struct is not a slice (`[T]`), a string (`str`), or a trait object (`dyn Trait`).
 //! - The resulting struct exceeds the maximum size allowed of `isize::MAX`.
 //! - The `deserialize` flag is used on a struct with a `dyn Trait` tail.
+//! - The `clone` flag is used on a struct with a `dyn Trait` tail.
+//!
+//! # Clone Support
+//!
+//! Because DST structs are unsized, `#[derive(Clone)]` cannot work for `Box<T>` since the
+//! standard derive doesn't know how to reconstruct the struct. Passing the `clone` flag in
+//! the attribute generates a `Clone` implementation for `Box<T>` that uses the macro-generated
+//! factory functions to create a deep copy.
+//!
+//! ```ignore
+//! use dst_factory::make_dst_factory;
+//!
+//! #[make_dst_factory(clone)]
+//! struct Message {
+//!     id: u32,
+//!     text: str,
+//! }
+//!
+//! let msg = Message::build(1, "hello");
+//! let cloned = msg.clone();
+//! assert_eq!(cloned.id, 1);
+//! assert_eq!(&cloned.text, "hello");
+//! ```
+//!
+//! Clone support works with both named and tuple structs, and with both `str` and `[T]`
+//! slice tails. It is not supported for `dyn Trait` tails, since there is no way to
+//! clone the concrete type through a trait object reference.
 //!
 //! # Acknowledgements
 //!
@@ -290,7 +317,6 @@ impl<'a> StructInfo<'a> {
 
     #[expect(
         clippy::unwrap_used,
-        clippy::unwrap_in_result,
         reason = "fields validated non-empty above; trait object always has a trait bound"
     )]
     fn process_fields(input_struct: &'a ItemStruct, fields: &'a Punctuated<Field, Comma>) -> SynResult<Self> {
@@ -676,7 +702,7 @@ fn factory_for_iter_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_t
                     #( #header_field_writes )*
 
                     // Write each element from the iterator into the tail field
-                    let tail_ptr = ::core::ptr::addr_of_mut!((*fat_ptr).#tail_field).cast::<#tail_type>();
+                    let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#tail_type>();
                     let mut guard = Guard { mem_ptr, tail_ptr, layout, initialized: 0 };
                     iter.for_each(|element| {
                         if guard.initialized == len {
@@ -691,7 +717,7 @@ fn factory_for_iter_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_t
                         panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
                     }
 
-                    ::std::mem::forget(guard);
+                    ::core::mem::forget(guard);
 
                     #box_path::from_raw(fat_ptr)
                 }
@@ -740,9 +766,32 @@ fn destructurer_iterator_type(macro_args: &MacroArgs, struct_info: &StructInfo, 
             }
         }
 
+        impl #impl_generics ::core::iter::ExactSizeIterator for #iterator_name #ty_generics #where_clause {
+            fn len(&self) -> usize {
+                self.len - self.index
+            }
+        }
+
+        impl #impl_generics ::core::fmt::Debug for #iterator_name #ty_generics #where_clause {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                f.debug_struct(::core::stringify!(#iterator_name))
+                    .field("index", &self.index)
+                    .field("len", &self.len)
+                    .finish()
+            }
+        }
+
         impl #impl_generics ::core::ops::Drop for #iterator_name #ty_generics #where_clause {
             fn drop(&mut self) {
-                unsafe { #dealloc_path(self.free_ptr, self.layout) }
+                unsafe {
+                    // Drop any remaining un-yielded elements
+                    while self.index < self.len {
+                        self.ptr.add(self.index).drop_in_place();
+                        self.index += 1;
+                    }
+
+                    #dealloc_path(self.free_ptr, self.layout)
+                }
             }
         }
     }
@@ -912,9 +961,76 @@ fn factory_for_trait_arg(macro_args: &MacroArgs, struct_info: &StructInfo, trait
 
                     let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#trait_generic>();
                     ::core::ptr::copy_nonoverlapping(::core::ptr::addr_of!(s), tail_ptr, 1);
+                    ::core::mem::forget(s);
 
                     #box_path::from_raw(fat_ptr)
                 }
+            }
+        }
+    }
+}
+
+enum CloneTailKind<'a> {
+    Slice(&'a Type),
+    Str,
+}
+
+fn gen_clone(macro_args: &MacroArgs, struct_info: &StructInfo, clone_tail: &CloneTailKind) -> TokenStream {
+    let struct_name = struct_info.struct_name;
+    let box_path = box_path(macro_args.no_std);
+    let factory_name = &macro_args.base_factory_name;
+
+    let header_accesses: Vec<TokenStream> = struct_info
+        .header_field_idents
+        .iter()
+        .map(|ident| quote! { self.#ident.clone() })
+        .collect();
+
+    let tail_ident = &struct_info.tail_field_ident;
+
+    let (factory_call, extra_bounds) = match clone_tail {
+        CloneTailKind::Slice(elem_type) => (
+            quote! { #struct_name::#factory_name(#( #header_accesses, )* self.#tail_ident.iter().cloned()) },
+            vec![quote! { #elem_type: ::core::clone::Clone }],
+        ),
+        CloneTailKind::Str => (
+            quote! { #struct_name::#factory_name(#( #header_accesses, )* &self.#tail_ident) },
+            vec![],
+        ),
+    };
+
+    // Build where clause with Clone bounds for header fields
+    let mut clone_bounds: Vec<TokenStream> = struct_info
+        .header_fields
+        .iter()
+        .map(|field| {
+            let ty = &field.ty;
+            quote! { #ty: ::core::clone::Clone }
+        })
+        .collect();
+    clone_bounds.extend(extra_bounds);
+
+    // Merge with existing where clause
+    let existing_predicates: Vec<TokenStream> = struct_info
+        .struct_generics
+        .where_clause
+        .as_ref()
+        .map_or_else(Vec::new, |wc| wc.predicates.iter().map(|p| quote! { #p }).collect());
+
+    let all_bounds: Vec<TokenStream> = existing_predicates.into_iter().chain(clone_bounds).collect();
+
+    let (impl_generics, ty_generics, _) = struct_info.struct_generics.split_for_impl();
+
+    let where_clause = if all_bounds.is_empty() {
+        quote! {}
+    } else {
+        quote! { where #( #all_bounds ),* }
+    };
+
+    quote! {
+        impl #impl_generics ::core::clone::Clone for #box_path<#struct_name #ty_generics> #where_clause {
+            fn clone(&self) -> Self {
+                #factory_call
             }
         }
     }
@@ -945,6 +1061,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
     }
 
     let mut serde_tokens: Option<TokenStream> = None;
+    let mut clone_tokens: Option<TokenStream> = None;
 
     if macro_args.deserialize {
         match &struct_info.tail_kind {
@@ -954,8 +1071,41 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
                     "deserialize is not supported for DSTs with trait object tails",
                 ));
             }
-            _ => {
-                serde_tokens = Some(serde_impls::gen_deserialize(&macro_args, &struct_info, &input_struct));
+            TailKind::Slice(elem_type) => {
+                let owned_tail_type: Type = syn::parse_quote! { ::std::vec::Vec<#elem_type> };
+                let factory_name = format_ident!("{}_from_slice", &macro_args.base_factory_name);
+                serde_tokens = Some(serde_impls::gen_deserialize(
+                    &struct_info,
+                    &input_struct,
+                    &owned_tail_type,
+                    &factory_name,
+                ));
+            }
+            TailKind::Str => {
+                let owned_tail_type: Type = syn::parse_quote! { ::std::string::String };
+                serde_tokens = Some(serde_impls::gen_deserialize(
+                    &struct_info,
+                    &input_struct,
+                    &owned_tail_type,
+                    &macro_args.base_factory_name,
+                ));
+            }
+        }
+    }
+
+    if macro_args.clone {
+        match &struct_info.tail_kind {
+            TailKind::TraitObject(_) => {
+                return Err(syn::Error::new_spanned(
+                    &input_struct,
+                    "clone is not supported for DSTs with trait object tails",
+                ));
+            }
+            TailKind::Slice(elem_type) => {
+                clone_tokens = Some(gen_clone(&macro_args, &struct_info, &CloneTailKind::Slice(elem_type)));
+            }
+            TailKind::Str => {
+                clone_tokens = Some(gen_clone(&macro_args, &struct_info, &CloneTailKind::Str));
             }
         }
     }
@@ -972,6 +1122,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 
         #iterator_type
         #serde_tokens
+        #clone_tokens
     })
 }
 
@@ -985,7 +1136,7 @@ fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult
 /// uses can pass arguments with the following grammar:
 ///
 /// ```ignore
-/// #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std] [, deserialize] [, generic=<generic_name>])]
+/// #[make_dst_factory(<base_factory_name>[, <visibility>] [, no_std] [, deserialize] [, clone] [, generic=<generic_name>])]
 /// ```
 /// Refer to the [crate-level documentation](crate) for more details and example uses.
 ///

@@ -1,0 +1,8 @@
+error: clone is not supported for DSTs with trait object tails
+  --> tests/ui/clone_trait_object.rs:8:1
+   |
+ 8 | / struct CloneTraitObject {
+ 9 | |     id: i32,
+10 | |     data: dyn MyTrait,
+11 | | }
+   | |_^

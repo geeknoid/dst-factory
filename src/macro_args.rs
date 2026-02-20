@@ -12,6 +12,7 @@ pub struct MacroArgs {
     pub visibility: Visibility,
     pub no_std: bool,
     pub deserialize: bool,
+    pub clone: bool,
     pub generic_name: Ident,
 }
 
@@ -24,6 +25,7 @@ impl Default for MacroArgs {
             visibility: Visibility::Inherited,
             no_std: false,
             deserialize: false,
+            clone: false,
             generic_name: Ident::new("G", proc_macro2::Span::call_site()),
         }
     }
@@ -76,6 +78,7 @@ impl Parse for MacroArgs {
             let ident = ahead.parse::<Ident>()?;
             if ident != "no_std"
                 && ident != "deserialize"
+                && ident != "clone"
                 && ident != "pub"
                 && ident != "generic"
                 && ident != "destructurer"
@@ -109,6 +112,11 @@ impl Parse for MacroArgs {
         if try_consume_keyword(input, "deserialize")? {
             result.deserialize = true;
             consume_trailing_comma(input, "deserialize")?;
+        }
+
+        if try_consume_keyword(input, "clone")? {
+            result.clone = true;
+            consume_trailing_comma(input, "clone")?;
         }
 
         if let Some(name) = parse_keyword_value(input, "generic")? {
