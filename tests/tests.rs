@@ -1011,4 +1011,699 @@ mod serde_tests {
         assert_eq!(original.tag, deserialized.tag);
         assert_eq!(&original.data, &deserialized.data);
     }
+
+    // --- Arc / Rc deserialize_with tests ---
+
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    #[derive(Serialize, serde::Deserialize)]
+    struct WrapperArcStr {
+        #[serde(deserialize_with = "SerdeStr::deserialize_arc")]
+        inner: Arc<SerdeStr>,
+    }
+
+    #[test]
+    fn serde_arc_str_deserialize_with() {
+        let original: Box<SerdeStr> = SerdeStr::build(42, "hello arc");
+        let json = serde_json::to_string(&*original).unwrap();
+        // Wrap in an outer struct for the deserialize_with path
+        let wrapped_json = format!(r#"{{"inner":{json}}}"#);
+        let wrapper: WrapperArcStr = serde_json::from_str(&wrapped_json).unwrap();
+        assert_eq!(wrapper.inner.id, 42);
+        assert_eq!(&wrapper.inner.message, "hello arc");
+    }
+
+    #[derive(Serialize, serde::Deserialize)]
+    struct WrapperRcStr {
+        #[serde(deserialize_with = "SerdeStr::deserialize_rc")]
+        inner: Rc<SerdeStr>,
+    }
+
+    #[test]
+    fn serde_rc_str_deserialize_with() {
+        let original: Box<SerdeStr> = SerdeStr::build(7, "hello rc");
+        let json = serde_json::to_string(&*original).unwrap();
+        let wrapped_json = format!(r#"{{"inner":{json}}}"#);
+        let wrapper: WrapperRcStr = serde_json::from_str(&wrapped_json).unwrap();
+        assert_eq!(wrapper.inner.id, 7);
+        assert_eq!(&wrapper.inner.message, "hello rc");
+    }
+
+    #[derive(Serialize, serde::Deserialize)]
+    struct WrapperArcSlice {
+        #[serde(deserialize_with = "SerdeSlice::deserialize_arc")]
+        inner: Arc<SerdeSlice>,
+    }
+
+    #[test]
+    fn serde_arc_slice_deserialize_with() {
+        let original: Box<SerdeSlice> = SerdeSlice::build_from_slice(3, &[1.0, 2.0, 3.0]);
+        let json = serde_json::to_string(&*original).unwrap();
+        let wrapped_json = format!(r#"{{"inner":{json}}}"#);
+        let wrapper: WrapperArcSlice = serde_json::from_str(&wrapped_json).unwrap();
+        assert_eq!(wrapper.inner.tag, 3);
+        assert_eq!(&wrapper.inner.values, &[1.0, 2.0, 3.0]);
+    }
+
+    #[derive(Serialize, serde::Deserialize)]
+    struct WrapperRcSlice {
+        #[serde(deserialize_with = "SerdeSlice::deserialize_rc")]
+        inner: Rc<SerdeSlice>,
+    }
+
+    #[test]
+    fn serde_rc_slice_deserialize_with() {
+        let original: Box<SerdeSlice> = SerdeSlice::build_from_slice(5, &[4.0, 5.0]);
+        let json = serde_json::to_string(&*original).unwrap();
+        let wrapped_json = format!(r#"{{"inner":{json}}}"#);
+        let wrapper: WrapperRcSlice = serde_json::from_str(&wrapped_json).unwrap();
+        assert_eq!(wrapper.inner.tag, 5);
+        assert_eq!(&wrapper.inner.values, &[4.0, 5.0]);
+    }
+
+    #[test]
+    fn serde_arc_shared_after_deserialize() {
+        let json = r#"{"inner":{"id":99,"message":"shared"}}"#;
+        let wrapper: WrapperArcStr = serde_json::from_str(json).unwrap();
+        let clone = Arc::clone(&wrapper.inner);
+        assert_eq!(Arc::strong_count(&wrapper.inner), 2);
+        assert_eq!(&clone.message, "shared");
+    }
+}
+
+// --- Arc tests ---
+
+use std::sync::Arc;
+
+// Arc + str
+
+#[test]
+fn arc_basic_str_usage() {
+    for i in 0..64 {
+        let s = ".".repeat(i);
+
+        let instance: Arc<BasicStrStruct> = BasicStrStruct::basic_str_builder_arc(i, s.as_str());
+
+        assert_eq!(instance.id, i);
+        assert_eq!(&instance.text_data, s.as_str());
+    }
+}
+
+#[test]
+fn arc_basic_tuple_usage() {
+    for i in 0..64 {
+        let s = ".".repeat(i);
+
+        let instance: Arc<BasicTupleStruct> = BasicTupleStruct::build_arc(i, s.as_str());
+
+        assert_eq!(instance.0, i);
+        assert_eq!(&instance.1, s.as_str());
+    }
+}
+
+#[test]
+fn arc_long_form_str_usage() {
+    for i in 0..64 {
+        let s = ".".repeat(i);
+
+        let instance: Arc<LongFormStrStruct> = LongFormStrStruct::build_arc(i, s.as_str());
+
+        assert_eq!(instance.id, i);
+        assert_eq!(&instance.text_data, s.as_str());
+    }
+}
+
+#[test]
+fn arc_only_str_dst_field() {
+    let instance: Arc<OnlyStrField> = OnlyStrField::build_only_str_arc("This is the only content.");
+    assert_eq!(&instance.content, "This is the only content.");
+}
+
+#[test]
+fn arc_empty_dst_str_data() {
+    let instance: Arc<BasicStrStruct> = BasicStrStruct::basic_str_builder_arc(0, "");
+    assert_eq!(instance.id, 0);
+    assert!(instance.text_data.is_empty());
+    assert_eq!(&instance.text_data, "");
+}
+
+// Arc + slice (from_slice)
+
+#[test]
+fn arc_basic_slice_from_slice() {
+    for i in 0..64 {
+        let v = vec!['*'; i];
+
+        let instance: Arc<BasicSliceStruct<char>> = BasicSliceStruct::basic_slice_builder_arc_from_slice(i, v.as_slice());
+
+        assert_eq!(instance.id, i);
+        assert_eq!(&instance.elements, v.as_slice());
+    }
+}
+
+#[test]
+fn arc_only_slice_dst_field() {
+    let char_data: &[char] = &['x', 'y', 'z'];
+    let instance: Arc<OnlySliceField<char>> = OnlySliceField::build_only_slice_arc_from_slice(char_data);
+    assert_eq!(&instance.items_data, char_data);
+}
+
+#[test]
+fn arc_empty_dst_slice_data() {
+    let empty_u16_data: &[u16] = &[];
+    let instance: Arc<BasicSliceStruct<u16>> = BasicSliceStruct::basic_slice_builder_arc_from_slice(empty_u16_data.len(), empty_u16_data);
+    assert_eq!(instance.id, 0);
+    assert!(instance.elements.is_empty());
+    assert_eq!(&instance.elements, empty_u16_data);
+}
+
+// Arc + slice (from iterator)
+
+#[test]
+fn arc_basic_slice_from_iter() {
+    for i in 0..64 {
+        let v = vec!['*'; i];
+
+        let instance: Arc<BasicSliceStruct<char>> = BasicSliceStruct::basic_slice_builder_arc(i, v.iter().copied());
+
+        assert_eq!(instance.id, i);
+        assert_eq!(&instance.elements, v.as_slice());
+    }
+}
+
+#[test]
+fn arc_basic_slice_from_vec() {
+    let v = vec![1u32, 2, 3, 4, 5];
+    let instance: Arc<BasicSliceStruct<u32>> = BasicSliceStruct::basic_slice_builder_arc(99, v.clone());
+    assert_eq!(instance.id, 99);
+    assert_eq!(&instance.elements, v.as_slice());
+}
+
+#[test]
+fn arc_only_slice_from_iter() {
+    let instance: Arc<OnlySliceField<char>> = OnlySliceField::build_only_slice_arc(['a', 'b', 'c']);
+    assert_eq!(&instance.items_data, &['a', 'b', 'c']);
+}
+
+#[test]
+#[should_panic(expected = "Mismatch between iterator-reported length and the number of items produced by the iterator")]
+fn arc_build_with_too_many_items() {
+    let iterator_with_wrong_len = FaultyIter {
+        items_to_yield: 20,
+        len_to_return: 10,
+    };
+
+    let _ = BasicSliceStruct::<u8>::basic_slice_builder_arc(42, iterator_with_wrong_len);
+}
+
+#[test]
+#[should_panic(expected = "Mismatch between iterator-reported length and the number of items produced by the iterator")]
+fn arc_build_with_too_few_items() {
+    let iterator_with_wrong_len = FaultyIter {
+        items_to_yield: 10,
+        len_to_return: 20,
+    };
+
+    let _ = BasicSliceStruct::<u8>::basic_slice_builder_arc(42, iterator_with_wrong_len);
+}
+
+// Arc + trait object
+
+#[test]
+fn arc_with_trait_object() {
+    let a: Arc<Node> = Node::build_arc(33, FortyTwoProducer {});
+    assert_eq!(42, a.producer.get_number());
+
+    let b: Arc<Node> = Node::build_arc(33, TenProducer {});
+    assert_eq!(10, b.producer.get_number());
+}
+
+#[test]
+fn arc_only_trait_dst_field() {
+    let instance: Arc<OnlyTraitField> = OnlyTraitField::build_arc(TenProducer {});
+    assert_eq!(instance.producer.get_number(), 10);
+}
+
+#[test]
+fn arc_with_lifetime_bound_trait_object() {
+    let a: Arc<LifetimeBoundNode> = LifetimeBoundNode::build_arc(5, FortyTwoProducer {});
+    assert_eq!(42, a.producer.get_number());
+    assert_eq!(5, a.count);
+}
+
+// Arc + trait object with Drop (verifies mem::forget fix)
+
+#[test]
+fn arc_trait_object_with_drop_impl() {
+    TRAIT_DROP_COUNT.store(0, Ordering::Relaxed);
+
+    {
+        let instance: Arc<GreeterNode> = GreeterNode::build_arc(
+            1,
+            HelloGreeter {
+                _data: "heap data".to_string(),
+            },
+        );
+        assert_eq!(instance.greeter.greet(), "hello");
+        // instance drops here — should drop exactly once
+    }
+
+    assert_eq!(TRAIT_DROP_COUNT.load(Ordering::Relaxed), 1);
+}
+
+// Arc shared ownership (Clone is free)
+
+#[test]
+fn arc_shared_ownership() {
+    let a: Arc<BasicStrStruct> = BasicStrStruct::basic_str_builder_arc(42, "shared");
+    let b = Arc::clone(&a);
+
+    assert_eq!(a.id, b.id);
+    assert_eq!(&a.text_data, &b.text_data);
+    assert_eq!(Arc::strong_count(&a), 2);
+}
+
+#[test]
+fn arc_shared_ownership_slice() {
+    let a: Arc<BasicSliceStruct<u32>> = BasicSliceStruct::basic_slice_builder_arc_from_slice(1, &[10, 20, 30]);
+    let b = Arc::clone(&a);
+
+    assert_eq!(a.id, b.id);
+    assert_eq!(&a.elements, &b.elements);
+    assert_eq!(Arc::strong_count(&a), 2);
+    drop(b);
+    assert_eq!(Arc::strong_count(&a), 1);
+}
+
+#[test]
+fn arc_shared_ownership_trait() {
+    let a: Arc<Node> = Node::build_arc(5, FortyTwoProducer {});
+    let b = Arc::clone(&a);
+
+    assert_eq!(a.producer.get_number(), 42);
+    assert_eq!(b.producer.get_number(), 42);
+    assert_eq!(Arc::strong_count(&a), 2);
+}
+
+// Arc + generics / where clauses / alignment
+
+#[test]
+fn arc_generic_lifetime_str_dst() {
+    let my_key = String::from("key_data");
+    let instance: Arc<GenericLifetimeStrStruct<String>> =
+        GenericLifetimeStrStruct::build_generic_lifetime_str_arc(&my_key, 77, "dynamic payload part");
+    assert_eq!(*instance.key_ref, "key_data");
+    assert_eq!(instance.id, 77);
+    assert_eq!(&instance.payload, "dynamic payload part");
+}
+
+#[test]
+fn arc_generic_const_dst() {
+    let instance: Arc<GenericConstStruct<2>> = GenericConstStruct::build_arc(42, [0, 1], [3, 4], "dynamic payload part");
+    assert_eq!(instance.id, 42);
+    assert_eq!(&instance.payload, "dynamic payload part");
+}
+
+#[test]
+fn arc_complex_fields_before_dst() {
+    let instance: Arc<ComplexFieldsStruct<u8>> = ComplexFieldsStruct::build_complex_fields_arc(
+        (1.0, -2.5, 3.0),
+        Some(vec!["tag1".to_string(), "tag2".to_string()]),
+        0,
+        "Log entry data here",
+    );
+    assert_eq!(instance.coordinates, (1.0, -2.5, 3.0));
+    assert_eq!(instance.tags, Some(vec!["tag1".to_string(), "tag2".to_string()]));
+    assert_eq!(&instance.raw_log, "Log entry data here");
+}
+
+#[test]
+fn arc_struct_from_iter_where_clause() {
+    let u8_items: &[u8] = &[11, 22, 33];
+    let instance: Arc<WhereClauseStruct<u8>> = WhereClauseStruct::build_where_clause_arc_from_slice(5u8, u8_items);
+    assert_eq!(instance.fixed_item, 5u8);
+    assert_eq!(&instance.variable_items, u8_items);
+}
+
+#[test]
+fn arc_packed_struct() {
+    let instance: Arc<PackedStruct> = PackedStruct::build_arc(0xDEAD_BEEF, "packed data");
+
+    // SAFETY: We are reading a packed field that is guaranteed to be aligned correctly
+    let data = unsafe { read_unaligned(&raw const instance.data) };
+
+    assert_eq!(data, 0xDEAD_BEEF);
+    assert_eq!(&instance.tail, "packed data");
+}
+
+#[test]
+fn arc_aligned_slice_struct() {
+    let instance: Arc<AlignedSliceStruct<Align32>> = AlignedSliceStruct::build_arc(42, [Align32 { payload: 0xDEAD_BEEF }]);
+
+    assert_eq!(instance.data, 42);
+    assert_eq!(instance.tail[0], Align32 { payload: 0xDEA_DBEEF });
+}
+
+#[test]
+fn arc_aligned_trait_struct() {
+    let instance: Arc<AlignedTraitStruct> = AlignedTraitStruct::build_arc(42, HundredProducer { payload: 100 });
+
+    assert_eq!(instance.data, 42);
+    assert_eq!(instance.tail.get_number(), 100);
+}
+
+// Arc + ZST slice
+
+#[test]
+fn arc_zst_slice_dst() {
+    let zst_data_slice: &[()] = &[(), (), (), ()];
+    let instance: Arc<ZstSliceStruct> = ZstSliceStruct::build_zst_slice_arc_from_slice(0xAB_CDEF, zst_data_slice);
+    assert_eq!(instance.a, 0xAB_CDEF);
+    assert_eq!(instance.unit_slice.len(), 4);
+}
+
+// Arc + custom factory names
+
+#[test]
+fn arc_public_builder() {
+    let instance: Arc<PublicBuilderStruct> = PublicBuilderStruct::create_publicly_arc(404, "Not Found");
+    assert_eq!(instance.code, 404);
+    assert_eq!(&instance.message, "Not Found");
+}
+
+#[test]
+fn arc_custom_destructure_from_slice() {
+    let v = vec!['a', 'b', 'c'];
+    let instance: Arc<CustomDestructureStruct<char>> = CustomDestructureStruct::build_arc_from_slice(3, v.as_slice());
+    assert_eq!(instance.id, 3);
+    assert_eq!(&instance.elements, v.as_slice());
+}
+
+// Arc + thread safety (the main reason to use Arc)
+
+#[test]
+fn arc_send_across_threads() {
+    let instance: Arc<BasicStrStruct> = BasicStrStruct::basic_str_builder_arc(42, "thread-safe");
+    let clone = Arc::clone(&instance);
+
+    let handle = std::thread::spawn(move || {
+        assert_eq!(clone.id, 42);
+        assert_eq!(&clone.text_data, "thread-safe");
+    });
+
+    handle.join().unwrap();
+    assert_eq!(instance.id, 42);
+}
+
+#[test]
+fn arc_slice_send_across_threads() {
+    let instance: Arc<BasicSliceStruct<u32>> = BasicSliceStruct::basic_slice_builder_arc_from_slice(1, &[10, 20, 30]);
+    let clone = Arc::clone(&instance);
+
+    let handle = std::thread::spawn(move || {
+        assert_eq!(clone.id, 1);
+        assert_eq!(&clone.elements, &[10, 20, 30]);
+    });
+
+    handle.join().unwrap();
+}
+
+// --- Rc tests ---
+
+use std::rc::Rc;
+
+// Rc + str
+
+#[test]
+fn rc_basic_str_usage() {
+    for i in 0..64 {
+        let s = ".".repeat(i);
+
+        let instance: Rc<BasicStrStruct> = BasicStrStruct::basic_str_builder_rc(i, s.as_str());
+
+        assert_eq!(instance.id, i);
+        assert_eq!(&instance.text_data, s.as_str());
+    }
+}
+
+#[test]
+fn rc_basic_tuple_usage() {
+    for i in 0..64 {
+        let s = ".".repeat(i);
+
+        let instance: Rc<BasicTupleStruct> = BasicTupleStruct::build_rc(i, s.as_str());
+
+        assert_eq!(instance.0, i);
+        assert_eq!(&instance.1, s.as_str());
+    }
+}
+
+#[test]
+fn rc_only_str_dst_field() {
+    let instance: Rc<OnlyStrField> = OnlyStrField::build_only_str_rc("This is the only content.");
+    assert_eq!(&instance.content, "This is the only content.");
+}
+
+#[test]
+fn rc_empty_dst_str_data() {
+    let instance: Rc<BasicStrStruct> = BasicStrStruct::basic_str_builder_rc(0, "");
+    assert_eq!(instance.id, 0);
+    assert!(instance.text_data.is_empty());
+}
+
+// Rc + slice (from_slice)
+
+#[test]
+fn rc_basic_slice_from_slice() {
+    for i in 0..64 {
+        let v = vec!['*'; i];
+
+        let instance: Rc<BasicSliceStruct<char>> = BasicSliceStruct::basic_slice_builder_rc_from_slice(i, v.as_slice());
+
+        assert_eq!(instance.id, i);
+        assert_eq!(&instance.elements, v.as_slice());
+    }
+}
+
+#[test]
+fn rc_only_slice_dst_field() {
+    let char_data: &[char] = &['x', 'y', 'z'];
+    let instance: Rc<OnlySliceField<char>> = OnlySliceField::build_only_slice_rc_from_slice(char_data);
+    assert_eq!(&instance.items_data, char_data);
+}
+
+#[test]
+fn rc_empty_dst_slice_data() {
+    let empty_u16_data: &[u16] = &[];
+    let instance: Rc<BasicSliceStruct<u16>> = BasicSliceStruct::basic_slice_builder_rc_from_slice(empty_u16_data.len(), empty_u16_data);
+    assert_eq!(instance.id, 0);
+    assert!(instance.elements.is_empty());
+}
+
+// Rc + slice (from iterator)
+
+#[test]
+fn rc_basic_slice_from_iter() {
+    for i in 0..64 {
+        let v = vec!['*'; i];
+
+        let instance: Rc<BasicSliceStruct<char>> = BasicSliceStruct::basic_slice_builder_rc(i, v.iter().copied());
+
+        assert_eq!(instance.id, i);
+        assert_eq!(&instance.elements, v.as_slice());
+    }
+}
+
+#[test]
+fn rc_basic_slice_from_vec() {
+    let v = vec![1u32, 2, 3, 4, 5];
+    let instance: Rc<BasicSliceStruct<u32>> = BasicSliceStruct::basic_slice_builder_rc(99, v.clone());
+    assert_eq!(instance.id, 99);
+    assert_eq!(&instance.elements, v.as_slice());
+}
+
+#[test]
+#[should_panic(expected = "Mismatch between iterator-reported length and the number of items produced by the iterator")]
+fn rc_build_with_too_many_items() {
+    let iterator_with_wrong_len = FaultyIter {
+        items_to_yield: 20,
+        len_to_return: 10,
+    };
+
+    let _ = BasicSliceStruct::<u8>::basic_slice_builder_rc(42, iterator_with_wrong_len);
+}
+
+#[test]
+#[should_panic(expected = "Mismatch between iterator-reported length and the number of items produced by the iterator")]
+fn rc_build_with_too_few_items() {
+    let iterator_with_wrong_len = FaultyIter {
+        items_to_yield: 10,
+        len_to_return: 20,
+    };
+
+    let _ = BasicSliceStruct::<u8>::basic_slice_builder_rc(42, iterator_with_wrong_len);
+}
+
+// Rc + trait object
+
+#[test]
+fn rc_with_trait_object() {
+    let a: Rc<Node> = Node::build_rc(33, FortyTwoProducer {});
+    assert_eq!(42, a.producer.get_number());
+
+    let b: Rc<Node> = Node::build_rc(33, TenProducer {});
+    assert_eq!(10, b.producer.get_number());
+}
+
+#[test]
+fn rc_only_trait_dst_field() {
+    let instance: Rc<OnlyTraitField> = OnlyTraitField::build_rc(TenProducer {});
+    assert_eq!(instance.producer.get_number(), 10);
+}
+
+#[test]
+fn rc_with_lifetime_bound_trait_object() {
+    let a: Rc<LifetimeBoundNode> = LifetimeBoundNode::build_rc(5, FortyTwoProducer {});
+    assert_eq!(42, a.producer.get_number());
+    assert_eq!(5, a.count);
+}
+
+// Rc + trait object with Drop (verifies mem::forget fix)
+
+#[test]
+fn rc_trait_object_with_drop_impl() {
+    TRAIT_DROP_COUNT.store(0, Ordering::Relaxed);
+
+    {
+        let instance: Rc<GreeterNode> = GreeterNode::build_rc(
+            1,
+            HelloGreeter {
+                _data: "heap data".to_string(),
+            },
+        );
+        assert_eq!(instance.greeter.greet(), "hello");
+    }
+
+    assert_eq!(TRAIT_DROP_COUNT.load(Ordering::Relaxed), 1);
+}
+
+// Rc shared ownership (Clone is free)
+
+#[test]
+fn rc_shared_ownership() {
+    let a: Rc<BasicStrStruct> = BasicStrStruct::basic_str_builder_rc(42, "shared");
+    let b = Rc::clone(&a);
+
+    assert_eq!(a.id, b.id);
+    assert_eq!(&a.text_data, &b.text_data);
+    assert_eq!(Rc::strong_count(&a), 2);
+}
+
+#[test]
+fn rc_shared_ownership_slice() {
+    let a: Rc<BasicSliceStruct<u32>> = BasicSliceStruct::basic_slice_builder_rc_from_slice(1, &[10, 20, 30]);
+    let b = Rc::clone(&a);
+
+    assert_eq!(a.id, b.id);
+    assert_eq!(&a.elements, &b.elements);
+    assert_eq!(Rc::strong_count(&a), 2);
+    drop(b);
+    assert_eq!(Rc::strong_count(&a), 1);
+}
+
+#[test]
+fn rc_shared_ownership_trait() {
+    let a: Rc<Node> = Node::build_rc(5, FortyTwoProducer {});
+    let b = Rc::clone(&a);
+
+    assert_eq!(a.producer.get_number(), 42);
+    assert_eq!(b.producer.get_number(), 42);
+    assert_eq!(Rc::strong_count(&a), 2);
+}
+
+// Rc + generics / where clauses / alignment
+
+#[test]
+fn rc_generic_lifetime_str_dst() {
+    let my_key = String::from("key_data");
+    let instance: Rc<GenericLifetimeStrStruct<String>> =
+        GenericLifetimeStrStruct::build_generic_lifetime_str_rc(&my_key, 77, "dynamic payload part");
+    assert_eq!(*instance.key_ref, "key_data");
+    assert_eq!(instance.id, 77);
+    assert_eq!(&instance.payload, "dynamic payload part");
+}
+
+#[test]
+fn rc_complex_fields_before_dst() {
+    let instance: Rc<ComplexFieldsStruct<u8>> = ComplexFieldsStruct::build_complex_fields_rc(
+        (1.0, -2.5, 3.0),
+        Some(vec!["tag1".to_string(), "tag2".to_string()]),
+        0,
+        "Log entry data here",
+    );
+    assert_eq!(instance.coordinates, (1.0, -2.5, 3.0));
+    assert_eq!(&instance.raw_log, "Log entry data here");
+}
+
+#[test]
+fn rc_struct_from_iter_where_clause() {
+    let u8_items: &[u8] = &[11, 22, 33];
+    let instance: Rc<WhereClauseStruct<u8>> = WhereClauseStruct::build_where_clause_rc_from_slice(5u8, u8_items);
+    assert_eq!(instance.fixed_item, 5u8);
+    assert_eq!(&instance.variable_items, u8_items);
+}
+
+#[test]
+fn rc_packed_struct() {
+    let instance: Rc<PackedStruct> = PackedStruct::build_rc(0xDEAD_BEEF, "packed data");
+
+    // SAFETY: We are reading a packed field that is guaranteed to be aligned correctly
+    let data = unsafe { read_unaligned(&raw const instance.data) };
+
+    assert_eq!(data, 0xDEAD_BEEF);
+    assert_eq!(&instance.tail, "packed data");
+}
+
+#[test]
+fn rc_aligned_slice_struct() {
+    let instance: Rc<AlignedSliceStruct<Align32>> = AlignedSliceStruct::build_rc(42, [Align32 { payload: 0xDEAD_BEEF }]);
+
+    assert_eq!(instance.data, 42);
+    assert_eq!(instance.tail[0], Align32 { payload: 0xDEA_DBEEF });
+}
+
+#[test]
+fn rc_aligned_trait_struct() {
+    let instance: Rc<AlignedTraitStruct> = AlignedTraitStruct::build_rc(42, HundredProducer { payload: 100 });
+
+    assert_eq!(instance.data, 42);
+    assert_eq!(instance.tail.get_number(), 100);
+}
+
+// Rc + ZST slice
+
+#[test]
+fn rc_zst_slice_dst() {
+    let zst_data_slice: &[()] = &[(), (), (), ()];
+    let instance: Rc<ZstSliceStruct> = ZstSliceStruct::build_zst_slice_rc_from_slice(0xAB_CDEF, zst_data_slice);
+    assert_eq!(instance.a, 0xAB_CDEF);
+    assert_eq!(instance.unit_slice.len(), 4);
+}
+
+// Rc + custom factory names
+
+#[test]
+fn rc_public_builder() {
+    let instance: Rc<PublicBuilderStruct> = PublicBuilderStruct::create_publicly_rc(404, "Not Found");
+    assert_eq!(instance.code, 404);
+    assert_eq!(&instance.message, "Not Found");
+}
+
+#[test]
+fn rc_custom_destructure_from_slice() {
+    let v = vec!['a', 'b', 'c'];
+    let instance: Rc<CustomDestructureStruct<char>> = CustomDestructureStruct::build_rc_from_slice(3, v.as_slice());
+    assert_eq!(instance.id, 3);
+    assert_eq!(&instance.elements, v.as_slice());
 }

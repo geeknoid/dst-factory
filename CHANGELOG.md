@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0 - 2026-03-14
+
+- Add support for factories that return Arc<T> and Rc<T>, in addition to the existing Box<T>
+
 ## 0.5.0 - 2026-02-18
 
 - Fixed soundness bug: trait object factory now correctly `mem::forget`s the source value after copying into the DST, preventing double-free when the concrete type owns heap data
