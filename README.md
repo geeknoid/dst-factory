@@ -9,17 +9,18 @@
 
 * [Summary](#summary)
 * [Why Should You Care?](#why-should-you-care)
+* [Where to Use DSTs?](#where-to-use-dsts)
 * [Examples](#examples)
-* [Attribute Features](#attribute-features)
-* [Other Features](#other-features)
+* [Smart Pointers](#smart-pointers)
+* [Trait Implementations](#trait-implementations)
 * [Serde Support](#serde-support)
+* [Other Features](#other-features)
 * [Error Conditions](#error-conditions)
-* [Acknowledgments](#acknowledgements)
+* [Acknowledgments](#acknowledgments)
 
 ## Summary
 
 <!-- cargo-rdme start -->
-
 
 Rich support to safely create instances of [Dynamically Sized Types](https://doc.rust-lang.org/reference/dynamically-sized-types.html).
 
@@ -37,7 +38,7 @@ instances of such types. This is where this crate comes in.
 You can apply the #[[`macro@make_dst_factory`]] attribute to your DST structs, which causes factory
 functions to be produced that let you easily and safely create instances of your DSTs.
 
-### Why Should You Care?
+## Why Should You Care?
 
 Dynamically sized types aren't for everyone. You can't use them as local variables
 or put them in arrays or vectors, so they can be inconvenient to use. However, their value
@@ -46,7 +47,7 @@ reduce the memory footprint of your application. If you're building graphs, tree
 dynamic data structures, you can often leverage DSTs to keep your individual nodes smaller
 and more efficient.
 
-### Where to Use DSTs?
+## Where to Use DSTs?
 
 It can be hard or tedious to discover where in your codebase there re opportunities to use DSTs.
 You can give the following prompt to your favorite AI to have it find candidate structs that
@@ -98,7 +99,7 @@ Output format per candidate:
  Savings: 1 allocation per instance × volume
 ```
 
-### Examples
+## Examples
 
 Here's an example using an array as the last field of a struct:
 
@@ -187,14 +188,14 @@ Because DSTs don't have a known size at compile time, you can't store them on th
 and you can't pass them by value. As a result of these constraints, the factory functions
 return smart-pointer-wrapped instances of the structs.
 
-### Smart Pointers
+## Smart Pointers
 
 The macro generates factory functions for three smart pointer types, each constructed
 in a **single allocation**:
 
 | Pointer | Factory suffix | Use case |
 |---------|---------------|----------|
-| [`Box<T>`] | *(none)* | Unique ownership (default) |
+| [`Box<T>`] | *(none)* | Unique ownership |
 | [`Arc<T>`](std::sync::Arc) | `_arc` | Shared ownership, thread-safe (atomic refcount) |
 | [`Rc<T>`](std::rc::Rc) | `_rc` | Shared ownership, single-threaded (non-atomic refcount) |
 
@@ -221,7 +222,16 @@ assert_eq!(&clone.name, "Bob");
 let local: Rc<User> = User::build_rc(33, "Carol");
 let clone = Rc::clone(&local);
 assert_eq!(&clone.name, "Carol");
+
+// Convert an existing Box<User> into Arc<User> or Rc<User>
+let boxed: Box<User> = User::build(33, "Dora");
+let shared: Arc<User> = User::into_arc(boxed);
+assert_eq!(&shared.name, "Dora");
 ```
+
+In addition to the factory methods, the macro always generates `into_arc` and `into_rc`
+associated functions that convert a `Box<Self>` into `Arc<Self>` or `Rc<Self>` while
+preserving the inline DST layout.
 
 ### Attribute Features
 
@@ -264,6 +274,9 @@ where
 
 fn destructure(this: Box<Self>) -> (Type1, Type2, ..., SelfIter);
 
+fn into_arc(this: Box<Self>) -> Arc<Self>;
+fn into_rc(this: Box<Self>) -> Rc<Self>;
+
 // for strings
 fn build(field1, field2, ..., last_field: impl AsRef<str>) -> Box<Self>;
 fn build_arc(field1, field2, ..., last_field: impl AsRef<str>) -> Arc<Self>;
@@ -288,7 +301,7 @@ visibility, and whether to generate code for the `no_std` environment. The gener
 grammar is:
 
 ```rust
-#[make_dst_factory(<base_factory_name> [, destructurer=<destructurer_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, deserialize] [, clone] [, generic=<generic_name>])]
+#[make_dst_factory(<base_factory_name> [, destructurer=<destructurer_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, deserialize] [, clone] [, debug] [, eq] [, ord] [, hash] [, generic=<generic_name>])]
 ```
 
 Some examples:
@@ -315,24 +328,30 @@ Some examples:
 #[make_dst_factory(create, no_std, generic=X)]
 ```
 
-### Other Features
+## Trait Implementations
 
-You can use the #[[`macro@make_dst_factory`]] attribute on structs with the normal Rust
-representation or C representation (`#[repr(C)]`), with any padding and alignment
-specification. See the Rust reference on [Type Layout](https://doc.rust-lang.org/reference/type-layout.html)
-for more details.
+Rust's standard `#[derive(...)]` doesn't work for DST structs because the derive macros
+can't handle unsized types. The #[[`macro@make_dst_factory`]] attribute provides flags to
+generate these trait implementations:
 
-### Clone Support
+| Flag | Trait(s) generated | Notes |
+|------|-------------------|-------|
+| `clone` | `Clone` for `Box<T>` | Deep copy via factory function |
+| `debug` | `Debug` for the struct | Named fields or tuple formatting |
+| `eq` | `PartialEq` and `Eq` for the struct | Compares all fields |
+| `ord` | `PartialOrd` and `Ord` for the struct | Compares all fields lexicographically |
+| `hash` | `Hash` for the struct | Hashes all fields |
 
-Because DST structs are unsized, `#[derive(Clone)]` cannot work for `Box<T>` since the
-standard derive doesn't know how to reconstruct the struct. Passing the `clone` flag in
-the attribute generates a `Clone` implementation for `Box<T>` that uses the macro-generated
-factory functions to create a deep copy.
+All flags work with both named and tuple structs, and with `str`, `[T]`, and `dyn Trait`
+tails. For `dyn Trait` tails, the generated where clauses require the trait object to
+implement the relevant trait (e.g. `dyn MyTrait: Debug`). The `clone` flag is the
+exception; it is not supported for `dyn Trait` tails since there is no way to clone
+a concrete type through a trait object reference.
 
 ```rust
 use dst_factory::make_dst_factory;
 
-#[make_dst_factory(clone)]
+#[make_dst_factory(clone, debug, eq, ord, hash)]
 struct Message {
     id: u32,
     text: str,
@@ -340,15 +359,11 @@ struct Message {
 
 let msg = Message::build(1, "hello");
 let cloned = msg.clone();
-assert_eq!(cloned.id, 1);
-assert_eq!(&cloned.text, "hello");
+assert_eq!(msg, cloned);
+assert_eq!(format!("{:?}", &*msg), "Message { id: 1, text: \"hello\" }");
 ```
 
-Clone support works with both named and tuple structs, and with both `str` and `[T]`
-slice tails. It is not supported for `dyn Trait` tails, since there is no way to
-clone the concrete type through a trait object reference.
-
-### Serde Support
+## Serde Support
 
 DST structs work naturally with `#[derive(Serialize)]` from serde, since serialization
 only requires a reference. However, `#[derive(Deserialize)]` cannot work because the
@@ -381,7 +396,7 @@ assert_eq!(restored.id, 1);
 assert_eq!(&restored.text, "hello");
 ```
 
-#### Deserializing into `Arc` and `Rc`
+### Deserializing into `Arc` and `Rc`
 
 Rust's orphan rules prevent implementing `Deserialize` for `Arc<T>` or `Rc<T>` directly
 (they are not `#[fundamental]` like `Box<T>`). Instead, the `deserialize` flag generates
@@ -415,7 +430,14 @@ Serde support works with both named and tuple structs, and with both `str` and `
 slice tails. It is not supported for `dyn Trait` tails, since there is no way to
 reconstruct the concrete type from serialized data.
 
-### Error Conditions
+## Other Features
+
+You can use the #[[`macro@make_dst_factory`]] attribute on structs with the normal Rust
+representation or C representation (`#[repr(C)]`), with any padding and alignment
+specification. See the Rust reference on [Type Layout](https://doc.rust-lang.org/reference/type-layout.html)
+for more details.
+
+## Error Conditions
 
 The #[[`macro@make_dst_factory`]] attribute produces a compile-time error if:
 
@@ -427,7 +449,7 @@ The #[[`macro@make_dst_factory`]] attribute produces a compile-time error if:
 - The `deserialize` flag is used on a struct with a `dyn Trait` tail.
 - The `clone` flag is used on a struct with a `dyn Trait` tail.
 
-### Acknowledgments
+## Acknowledgments
 
 Many thanks to <https://github.com/scottmcm> for his invaluable help getting the factory methods
 in top shape.

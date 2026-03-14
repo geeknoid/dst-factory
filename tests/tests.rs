@@ -2,6 +2,12 @@ use core::fmt::Debug;
 use core::ptr::read_unaligned;
 use dst_factory::make_dst_factory;
 
+fn hash_value<T: core::hash::Hash + ?Sized>(value: &T) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    core::hash::Hash::hash(value, &mut hasher);
+    core::hash::Hasher::finish(&hasher)
+}
+
 #[make_dst_factory(basic_str_builder)]
 struct BasicStrStruct {
     id: usize,
@@ -518,6 +524,7 @@ fn custom_iterator_usage() {
 fn no_std() {
     let t = trybuild::TestCases::new();
     t.pass("tests/ui/no_std.rs");
+    t.pass("tests/ui/no_std_serde.rs");
 }
 
 #[test]
@@ -544,6 +551,10 @@ fn error_paths() {
     t.compile_fail("tests/ui/no_comma_after_iterator.rs");
     t.compile_fail("tests/ui/clone_trait_object.rs");
     t.compile_fail("tests/ui/no_comma_after_clone.rs");
+    t.compile_fail("tests/ui/no_comma_after_debug.rs");
+    t.compile_fail("tests/ui/no_comma_after_eq.rs");
+    t.compile_fail("tests/ui/no_comma_after_ord.rs");
+    t.compile_fail("tests/ui/no_comma_after_hash.rs");
 }
 
 // --- Clone tests ---
@@ -615,6 +626,157 @@ fn clone_only_slice_field() {
     let original: Box<CloneableOnlySlice> = CloneableOnlySlice::build_from_slice(&[10, 20, 30]);
     let cloned = original.clone();
     assert_eq!(&original.items, &cloned.items);
+}
+
+#[make_dst_factory(clone, debug, eq, ord, hash)]
+struct DebugEqHashStr {
+    id: u32,
+    text: str,
+}
+
+#[make_dst_factory(debug, eq, ord, hash)]
+struct DebugEqHashSliceTuple<T>(u8, [T])
+where
+    T: Debug + Eq + Ord + core::hash::Hash;
+
+#[test]
+fn debug_impl_for_named_str_dst() {
+    let instance: Box<DebugEqHashStr> = DebugEqHashStr::build(7, "hello debug");
+    assert_eq!(format!("{:?}", &*instance), "DebugEqHashStr { id: 7, text: \"hello debug\" }");
+}
+
+#[test]
+fn debug_impl_for_tuple_slice_dst() {
+    let instance: Box<DebugEqHashSliceTuple<u32>> = DebugEqHashSliceTuple::build_from_slice(3, &[10, 20, 30]);
+    assert_eq!(format!("{:?}", &*instance), "DebugEqHashSliceTuple(3, [10, 20, 30])");
+}
+
+#[test]
+fn eq_impl_for_dsts() {
+    let original: Box<DebugEqHashStr> = DebugEqHashStr::build(9, "same");
+    let cloned = original.clone();
+    let different: Box<DebugEqHashStr> = DebugEqHashStr::build(9, "different");
+    assert_eq!(original, cloned);
+    assert_ne!(original, different);
+
+    let left: Box<DebugEqHashSliceTuple<u32>> = DebugEqHashSliceTuple::build_from_slice(1, &[1, 2, 3]);
+    let right: Box<DebugEqHashSliceTuple<u32>> = DebugEqHashSliceTuple::build_from_slice(1, &[1, 2, 3]);
+    let other: Box<DebugEqHashSliceTuple<u32>> = DebugEqHashSliceTuple::build_from_slice(1, &[1, 2, 4]);
+    assert_eq!(left, right);
+    assert_ne!(left, other);
+}
+
+#[test]
+fn hash_impl_for_dsts() {
+    let first_str: Box<DebugEqHashStr> = DebugEqHashStr::build(5, "hash me");
+    let same_str: Box<DebugEqHashStr> = DebugEqHashStr::build(5, "hash me");
+    let different_str: Box<DebugEqHashStr> = DebugEqHashStr::build(5, "hash someone else");
+    assert_eq!(hash_value(&*first_str), hash_value(&*same_str));
+    assert_ne!(hash_value(&*first_str), hash_value(&*different_str));
+
+    let first_slice: Box<DebugEqHashSliceTuple<u32>> = DebugEqHashSliceTuple::build_from_slice(8, &[4, 5, 6]);
+    let same_slice: Box<DebugEqHashSliceTuple<u32>> = DebugEqHashSliceTuple::build_from_slice(8, &[4, 5, 6]);
+    let different_slice: Box<DebugEqHashSliceTuple<u32>> = DebugEqHashSliceTuple::build_from_slice(8, &[4, 5, 7]);
+    assert_eq!(hash_value(&*first_slice), hash_value(&*same_slice));
+    assert_ne!(hash_value(&*first_slice), hash_value(&*different_slice));
+}
+
+#[test]
+fn ord_impl_for_dsts() {
+    let apple: Box<DebugEqHashStr> = DebugEqHashStr::build(1, "apple");
+    let banana: Box<DebugEqHashStr> = DebugEqHashStr::build(1, "banana");
+    let higher_id: Box<DebugEqHashStr> = DebugEqHashStr::build(2, "apple");
+    assert!(apple < banana); // same id, "apple" < "banana"
+    assert!(apple < higher_id); // id 1 < id 2
+    assert!(banana < higher_id); // id 1 < id 2
+
+    let small: Box<DebugEqHashSliceTuple<u32>> = DebugEqHashSliceTuple::build_from_slice(1, &[1, 2, 3]);
+    let larger_tail: Box<DebugEqHashSliceTuple<u32>> = DebugEqHashSliceTuple::build_from_slice(1, &[1, 2, 4]);
+    let larger_header: Box<DebugEqHashSliceTuple<u32>> = DebugEqHashSliceTuple::build_from_slice(2, &[1, 2, 3]);
+    assert!(small < larger_tail); // same header, [1,2,3] < [1,2,4]
+    assert!(small < larger_header); // header 1 < 2
+}
+
+// Trait object with Debug — exercises tail_bound's TraitObject arm
+#[expect(dead_code, reason = "exists to test Debug on trait object DSTs")]
+trait DebugProducer: Debug {
+    fn get_value(&self) -> u32;
+}
+
+#[derive(Debug)]
+struct DebugFortyTwo;
+impl DebugProducer for DebugFortyTwo {
+    fn get_value(&self) -> u32 {
+        42
+    }
+}
+
+#[make_dst_factory(debug)]
+struct DebugTraitNode {
+    id: u32,
+    producer: dyn DebugProducer,
+}
+
+#[test]
+fn debug_impl_for_trait_object_dst() {
+    let instance: Box<DebugTraitNode> = DebugTraitNode::build(7, DebugFortyTwo);
+    let debug_str = format!("{:?}", &*instance);
+    assert!(debug_str.contains("DebugTraitNode"));
+    assert!(debug_str.contains("id"));
+    assert!(debug_str.contains("DebugFortyTwo"));
+}
+
+#[test]
+fn into_arc_from_box_str() {
+    let boxed: Box<BasicStrStruct> = BasicStrStruct::basic_str_builder(11, "shared box");
+    let shared: Arc<BasicStrStruct> = BasicStrStruct::into_arc(boxed);
+    assert_eq!(shared.id, 11);
+    assert_eq!(&shared.text_data, "shared box");
+    assert_eq!(Arc::strong_count(&shared), 1);
+}
+
+#[test]
+fn into_rc_from_box_slice() {
+    let boxed: Box<BasicSliceStruct<u32>> = BasicSliceStruct::basic_slice_builder(12, [1, 2, 3, 4]);
+    let local: Rc<BasicSliceStruct<u32>> = BasicSliceStruct::into_rc(boxed);
+    assert_eq!(local.id, 12);
+    assert_eq!(&local.elements, &[1, 2, 3, 4]);
+    assert_eq!(Rc::strong_count(&local), 1);
+}
+
+#[test]
+fn into_arc_handles_zero_sized_box_allocation() {
+    let boxed: Box<OnlyStrField> = OnlyStrField::build_only_str("");
+    let shared: Arc<OnlyStrField> = OnlyStrField::into_arc(boxed);
+    assert_eq!(&shared.content, "");
+    assert_eq!(Arc::strong_count(&shared), 1);
+}
+
+#[test]
+fn into_arc_trait_object_preserves_drop_semantics() {
+    TRAIT_DROP_COUNT.store(0, Ordering::Relaxed);
+
+    {
+        let boxed: Box<GreeterNode> = GreeterNode::build(
+            2,
+            HelloGreeter {
+                _data: "converted".to_string(),
+            },
+        );
+        let shared: Arc<GreeterNode> = GreeterNode::into_arc(boxed);
+        assert_eq!(shared.id, 2);
+        assert_eq!(shared.greeter.greet(), "hello");
+    }
+
+    assert_eq!(TRAIT_DROP_COUNT.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn into_rc_trait_object_preserves_behavior() {
+    let boxed: Box<Node> = Node::build(6, FortyTwoProducer {});
+    let local: Rc<Node> = Node::into_rc(boxed);
+    assert_eq!(local.count, 6);
+    assert_eq!(local.producer.get_number(), 42);
 }
 
 // --- ExactSizeIterator and Debug tests ---

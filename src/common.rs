@@ -465,6 +465,65 @@ pub fn rc_alloc_and_init(no_std: bool) -> TokenStream {
     }
 }
 
+fn rebuilt_fat_ptr_from_existing_metadata(struct_info: &StructInfo, data_ptr_ident: &Ident) -> TokenStream {
+    match &struct_info.tail_kind {
+        TailKind::Slice(_) | TailKind::Str => quote! {
+            let (_, metadata): (*mut u8, usize) = ::core::mem::transmute(src_ptr);
+            let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((#data_ptr_ident, metadata));
+        },
+        TailKind::TraitObject(_) => quote! {
+            let (_, metadata): (*mut u8, *const ()) = ::core::mem::transmute(src_ptr);
+            let fat_ptr = ::core::mem::transmute::<(*mut u8, *const ()), *mut Self>((#data_ptr_ident, metadata));
+        },
+    }
+}
+
+fn gen_into_ptr(macro_args: &MacroArgs, struct_info: &StructInfo, ptr: &PtrKind) -> TokenStream {
+    let visibility = &macro_args.visibility;
+    let box_path = box_path(macro_args.no_std);
+    let ptr_path = &ptr.ptr_path;
+    let alloc_tokens = &ptr.alloc_tokens;
+    let data_ptr_ident = &ptr.data_ptr_ident;
+    let from_raw = &ptr.from_raw;
+    let dealloc_path = dealloc_path(macro_args.no_std);
+    let fat_ptr_rebuild = rebuilt_fat_ptr_from_existing_metadata(struct_info, data_ptr_ident);
+    let fn_name = format_ident!("into{}", ptr.name_suffix);
+    let factory_doc = format!(
+        "Converts a `Box<{name}>` into a single-allocation `{display}<{name}>`.",
+        name = struct_info.struct_name,
+        display = ptr.display_name
+    );
+
+    quote! {
+        #[doc = #factory_doc]
+        #[allow(clippy::transmute_undefined_repr)]
+        #visibility fn #fn_name(this: #box_path<Self>) -> #ptr_path<Self> {
+            let layout = ::core::alloc::Layout::for_value(&*this);
+            let src_ptr = #box_path::into_raw(this);
+
+            unsafe {
+                #alloc_tokens
+                #fat_ptr_rebuild
+
+                ::core::ptr::copy_nonoverlapping(src_ptr as *const u8, fat_ptr as *mut u8, layout.size());
+                if layout.size() != 0 {
+                    #dealloc_path(src_ptr as *mut u8, layout);
+                }
+
+                #from_raw
+            }
+        }
+    }
+}
+
+pub fn gen_into_arc(macro_args: &MacroArgs, struct_info: &StructInfo) -> TokenStream {
+    gen_into_ptr(macro_args, struct_info, &PtrKind::new_arc(macro_args.no_std))
+}
+
+pub fn gen_into_rc(macro_args: &MacroArgs, struct_info: &StructInfo) -> TokenStream {
+    gen_into_ptr(macro_args, struct_info, &PtrKind::new_rc(macro_args.no_std))
+}
+
 // ---------------------------------------------------------------------------
 // Unified factory generation functions
 // ---------------------------------------------------------------------------
@@ -897,11 +956,15 @@ fn gen_serde(
             "deserialize is not supported for DSTs with trait object tails",
         )),
         TailKind::Slice(elem_type) => {
-            let owned_tail_type: Type = syn::parse_quote! { ::std::vec::Vec<#elem_type> };
+            let owned_tail_type: Type = if macro_args.no_std {
+                syn::parse_quote! { ::alloc::vec::Vec<#elem_type> }
+            } else {
+                syn::parse_quote! { ::std::vec::Vec<#elem_type> }
+            };
+            let bp = box_path(macro_args.no_std);
             let factory_name = format_ident!("{}_from_slice", &macro_args.base_factory_name);
-            let box_tokens = serde::gen_deserialize(struct_info, input_struct, &owned_tail_type, &factory_name);
+            let box_tokens = serde::gen_deserialize(struct_info, input_struct, &owned_tail_type, &factory_name, &bp, false);
 
-            // Generate serde functions for Arc and Rc using unified approach
             for ptr in &[PtrKind::new_arc(macro_args.no_std), PtrKind::new_rc(macro_args.no_std)] {
                 let factory = format_ident!("{}{}_from_slice", &macro_args.base_factory_name, ptr.name_suffix);
                 let fn_name = format_ident!("deserialize{}", ptr.name_suffix);
@@ -915,16 +978,30 @@ fn gen_serde(
                     &intermediate_name,
                     &ptr.ptr_path,
                     &macro_args.visibility,
+                    false,
                 ));
             }
 
             Ok(Some(box_tokens))
         }
         TailKind::Str => {
-            let owned_tail_type: Type = syn::parse_quote! { ::std::string::String };
-            let box_tokens = serde::gen_deserialize(struct_info, input_struct, &owned_tail_type, &macro_args.base_factory_name);
+            let (tail_type, borrow_tail): (Type, bool) = if macro_args.no_std {
+                // no_std: use alloc::string::String (Cow requires std serde internals)
+                (syn::parse_quote! { ::alloc::string::String }, false)
+            } else {
+                // std: use Cow<'__borrow, str> to avoid intermediate String allocation
+                (syn::parse_quote! { ::std::borrow::Cow<'__borrow, str> }, true)
+            };
+            let bp = box_path(macro_args.no_std);
+            let box_tokens = serde::gen_deserialize(
+                struct_info,
+                input_struct,
+                &tail_type,
+                &macro_args.base_factory_name,
+                &bp,
+                borrow_tail,
+            );
 
-            // Generate serde functions for Arc and Rc using unified approach
             for ptr in &[PtrKind::new_arc(macro_args.no_std), PtrKind::new_rc(macro_args.no_std)] {
                 let factory = format_ident!("{}{}", &macro_args.base_factory_name, ptr.name_suffix);
                 let fn_name = format_ident!("deserialize{}", ptr.name_suffix);
@@ -932,12 +1009,13 @@ fn gen_serde(
                 factories.push(serde::gen_deserialize_fn(
                     struct_info,
                     input_struct,
-                    &owned_tail_type,
+                    &tail_type,
                     &factory,
                     &fn_name,
                     &intermediate_name,
                     &ptr.ptr_path,
                     &macro_args.visibility,
+                    borrow_tail,
                 ));
             }
 
@@ -953,6 +1031,9 @@ pub fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynRe
 
     let mut factories = Vec::new();
     let mut iterator_type = None;
+
+    factories.push(gen_into_arc(&macro_args, &struct_info));
+    factories.push(gen_into_rc(&macro_args, &struct_info));
 
     // Create PtrKind instances for all three pointer types
     let ptr_kinds = [
@@ -991,6 +1072,12 @@ pub fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynRe
 
     let mut serde_tokens: Option<TokenStream> = None;
     let mut clone_tokens: Option<TokenStream> = None;
+    let mut debug_tokens: Option<TokenStream> = None;
+    let mut partial_eq_tokens: Option<TokenStream> = None;
+    let mut eq_tokens: Option<TokenStream> = None;
+    let mut partial_ord_tokens: Option<TokenStream> = None;
+    let mut ord_tokens: Option<TokenStream> = None;
+    let mut hash_tokens: Option<TokenStream> = None;
 
     if macro_args.deserialize {
         serde_tokens = gen_serde(&macro_args, &struct_info, &input_struct, &mut factories)?;
@@ -1013,6 +1100,24 @@ pub fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynRe
         }
     }
 
+    if macro_args.debug {
+        debug_tokens = Some(r#box::gen_debug(&struct_info));
+    }
+
+    if macro_args.eq {
+        partial_eq_tokens = Some(r#box::gen_partial_eq(&struct_info));
+        eq_tokens = Some(r#box::gen_eq(&struct_info));
+    }
+
+    if macro_args.ord {
+        partial_ord_tokens = Some(r#box::gen_partial_ord(&struct_info));
+        ord_tokens = Some(r#box::gen_ord(&struct_info));
+    }
+
+    if macro_args.hash {
+        hash_tokens = Some(r#box::gen_hash(&struct_info));
+    }
+
     let (impl_generics, ty_generics, where_clause) = struct_info.struct_generics.split_for_impl();
     let struct_name_ident = struct_info.struct_name;
 
@@ -1026,5 +1131,11 @@ pub fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynRe
         #iterator_type
         #serde_tokens
         #clone_tokens
+        #debug_tokens
+        #partial_eq_tokens
+        #eq_tokens
+        #partial_ord_tokens
+        #ord_tokens
+        #hash_tokens
     })
 }

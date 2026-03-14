@@ -1,0 +1,5 @@
+error: Expected comma after hash
+ --> tests/ui/no_comma_after_hash.rs:3:44
+  |
+3 | #[make_dst_factory(create, debug, eq, hash no_std)]
+  |                                            ^^^^^^

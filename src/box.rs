@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Ident, Type};
 
-use crate::common::{StructInfo, box_path, dealloc_path};
+use crate::common::{StructInfo, TailKind, box_path, dealloc_path};
 use crate::macro_args::MacroArgs;
 
 pub fn destructurer_iterator_type(macro_args: &MacroArgs, struct_info: &StructInfo, tail_type: &Type) -> TokenStream {
@@ -117,6 +117,44 @@ pub enum CloneTailKind<'a> {
     Str,
 }
 
+fn merged_where_clause(struct_info: &StructInfo, extra_bounds: Vec<TokenStream>) -> TokenStream {
+    let existing_predicates: Vec<TokenStream> = struct_info
+        .struct_generics
+        .where_clause
+        .as_ref()
+        .map_or_else(Vec::new, |wc| wc.predicates.iter().map(|predicate| quote! { #predicate }).collect());
+
+    let all_bounds: Vec<TokenStream> = existing_predicates.into_iter().chain(extra_bounds).collect();
+
+    if all_bounds.is_empty() {
+        quote! {}
+    } else {
+        quote! { where #( #all_bounds ),* }
+    }
+}
+
+fn header_bounds(struct_info: &StructInfo, bound: &TokenStream) -> Vec<TokenStream> {
+    struct_info
+        .header_fields
+        .iter()
+        .map(|field| {
+            let ty = &field.ty;
+            quote! { #ty: #bound }
+        })
+        .collect()
+}
+
+fn tail_bound(struct_info: &StructInfo, bound: &TokenStream) -> Option<TokenStream> {
+    match &struct_info.tail_kind {
+        TailKind::Slice(elem_type) => Some(quote! { #elem_type: #bound }),
+        TailKind::TraitObject(_) => {
+            let tail_ty = &struct_info.tail_field.ty;
+            Some(quote! { #tail_ty: #bound })
+        }
+        TailKind::Str => None, // str always implements Debug/PartialEq/Eq/Hash
+    }
+}
+
 pub fn gen_clone(macro_args: &MacroArgs, struct_info: &StructInfo, clone_tail: &CloneTailKind) -> TokenStream {
     let struct_name = struct_info.struct_name;
     let box_path = box_path(macro_args.no_std);
@@ -130,7 +168,7 @@ pub fn gen_clone(macro_args: &MacroArgs, struct_info: &StructInfo, clone_tail: &
 
     let tail_ident = &struct_info.tail_field_ident;
 
-    let (factory_call, extra_bounds) = match clone_tail {
+    let (factory_call, mut clone_bounds) = match clone_tail {
         CloneTailKind::Slice(elem_type) => (
             quote! { #struct_name::#factory_name(#( #header_accesses, )* self.#tail_ident.iter().cloned()) },
             vec![quote! { #elem_type: ::core::clone::Clone }],
@@ -141,36 +179,203 @@ pub fn gen_clone(macro_args: &MacroArgs, struct_info: &StructInfo, clone_tail: &
         ),
     };
 
-    let mut clone_bounds: Vec<TokenStream> = struct_info
-        .header_fields
-        .iter()
-        .map(|field| {
-            let ty = &field.ty;
-            quote! { #ty: ::core::clone::Clone }
-        })
-        .collect();
-    clone_bounds.extend(extra_bounds);
-
-    let existing_predicates: Vec<TokenStream> = struct_info
-        .struct_generics
-        .where_clause
-        .as_ref()
-        .map_or_else(Vec::new, |wc| wc.predicates.iter().map(|p| quote! { #p }).collect());
-
-    let all_bounds: Vec<TokenStream> = existing_predicates.into_iter().chain(clone_bounds).collect();
+    let mut prefixed_bounds = header_bounds(struct_info, &quote! { ::core::clone::Clone });
+    prefixed_bounds.append(&mut clone_bounds);
+    clone_bounds = prefixed_bounds;
 
     let (impl_generics, ty_generics, _) = struct_info.struct_generics.split_for_impl();
-
-    let where_clause = if all_bounds.is_empty() {
-        quote! {}
-    } else {
-        quote! { where #( #all_bounds ),* }
-    };
+    let where_clause = merged_where_clause(struct_info, clone_bounds);
 
     quote! {
         impl #impl_generics ::core::clone::Clone for #box_path<#struct_name #ty_generics> #where_clause {
             fn clone(&self) -> Self {
                 #factory_call
+            }
+        }
+    }
+}
+
+pub fn gen_debug(struct_info: &StructInfo) -> TokenStream {
+    let struct_name = struct_info.struct_name;
+    let (impl_generics, ty_generics, _) = struct_info.struct_generics.split_for_impl();
+
+    let mut debug_bounds = header_bounds(struct_info, &quote! { ::core::fmt::Debug });
+    debug_bounds.extend(tail_bound(struct_info, &quote! { ::core::fmt::Debug }));
+    let where_clause = merged_where_clause(struct_info, debug_bounds);
+
+    struct_info.tail_field.ident.as_ref().map_or_else(
+        || {
+            let header_fields: Vec<TokenStream> = struct_info
+                .header_field_idents
+                .iter()
+                .map(|ident| quote! { .field(&self.#ident) })
+                .collect();
+            let tail_ident = &struct_info.tail_field_ident;
+
+            quote! {
+                impl #impl_generics ::core::fmt::Debug for #struct_name #ty_generics #where_clause {
+                    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                        f.debug_tuple(::core::stringify!(#struct_name))
+                            #( #header_fields )*
+                            .field(&&self.#tail_ident)
+                            .finish()
+                    }
+                }
+            }
+        },
+        |tail_ident| {
+            let header_fields: Vec<TokenStream> = struct_info
+                .header_fields
+                .iter()
+                .filter_map(|field| field.ident.as_ref())
+                .map(|field_ident| {
+                    let field_name = field_ident.to_string();
+                    quote! { .field(#field_name, &self.#field_ident) }
+                })
+                .collect();
+            let tail_name = tail_ident.to_string();
+
+            quote! {
+                impl #impl_generics ::core::fmt::Debug for #struct_name #ty_generics #where_clause {
+                    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                        f.debug_struct(::core::stringify!(#struct_name))
+                            #( #header_fields )*
+                            .field(#tail_name, &&self.#tail_ident)
+                            .finish()
+                    }
+                }
+            }
+        },
+    )
+}
+
+pub fn gen_partial_eq(struct_info: &StructInfo) -> TokenStream {
+    let struct_name = struct_info.struct_name;
+    let (impl_generics, ty_generics, _) = struct_info.struct_generics.split_for_impl();
+
+    let mut partial_eq_bounds = header_bounds(struct_info, &quote! { ::core::cmp::PartialEq });
+    partial_eq_bounds.extend(tail_bound(struct_info, &quote! { ::core::cmp::PartialEq }));
+    let where_clause = merged_where_clause(struct_info, partial_eq_bounds);
+
+    let comparisons: Vec<TokenStream> = struct_info
+        .header_field_idents
+        .iter()
+        .map(|ident| quote! { self.#ident == other.#ident })
+        .chain(::core::iter::once({
+            let tail_ident = &struct_info.tail_field_ident;
+            quote! { self.#tail_ident == other.#tail_ident }
+        }))
+        .collect();
+
+    quote! {
+        impl #impl_generics ::core::cmp::PartialEq for #struct_name #ty_generics #where_clause {
+            fn eq(&self, other: &Self) -> bool {
+                #( #comparisons )&&*
+            }
+        }
+    }
+}
+
+pub fn gen_eq(struct_info: &StructInfo) -> TokenStream {
+    let struct_name = struct_info.struct_name;
+    let (impl_generics, ty_generics, _) = struct_info.struct_generics.split_for_impl();
+
+    let mut eq_bounds = header_bounds(struct_info, &quote! { ::core::cmp::Eq });
+    eq_bounds.extend(tail_bound(struct_info, &quote! { ::core::cmp::Eq }));
+    let where_clause = merged_where_clause(struct_info, eq_bounds);
+
+    quote! {
+        impl #impl_generics ::core::cmp::Eq for #struct_name #ty_generics #where_clause {}
+    }
+}
+
+pub fn gen_hash(struct_info: &StructInfo) -> TokenStream {
+    let struct_name = struct_info.struct_name;
+    let (impl_generics, ty_generics, _) = struct_info.struct_generics.split_for_impl();
+
+    let mut hash_bounds = header_bounds(struct_info, &quote! { ::core::hash::Hash });
+    hash_bounds.extend(tail_bound(struct_info, &quote! { ::core::hash::Hash }));
+    let where_clause = merged_where_clause(struct_info, hash_bounds);
+
+    let header_hashes: Vec<TokenStream> = struct_info
+        .header_field_idents
+        .iter()
+        .map(|ident| quote! { ::core::hash::Hash::hash(&self.#ident, state); })
+        .collect();
+    let tail_ident = &struct_info.tail_field_ident;
+
+    quote! {
+        impl #impl_generics ::core::hash::Hash for #struct_name #ty_generics #where_clause {
+            fn hash<H>(&self, state: &mut H)
+            where
+                H: ::core::hash::Hasher,
+            {
+                #( #header_hashes )*
+                ::core::hash::Hash::hash(&self.#tail_ident, state);
+            }
+        }
+    }
+}
+
+pub fn gen_partial_ord(struct_info: &StructInfo) -> TokenStream {
+    let struct_name = struct_info.struct_name;
+    let (impl_generics, ty_generics, _) = struct_info.struct_generics.split_for_impl();
+
+    let mut bounds = header_bounds(struct_info, &quote! { ::core::cmp::PartialOrd });
+    bounds.extend(tail_bound(struct_info, &quote! { ::core::cmp::PartialOrd }));
+    let where_clause = merged_where_clause(struct_info, bounds);
+
+    let field_chains: Vec<TokenStream> = struct_info
+        .header_field_idents
+        .iter()
+        .map(|ident| {
+            quote! {
+                match ::core::cmp::PartialOrd::partial_cmp(&self.#ident, &other.#ident) {
+                    ::core::option::Option::Some(::core::cmp::Ordering::Equal) => {}
+                    ord => return ord,
+                }
+            }
+        })
+        .collect();
+    let tail_ident = &struct_info.tail_field_ident;
+
+    quote! {
+        impl #impl_generics ::core::cmp::PartialOrd for #struct_name #ty_generics #where_clause {
+            fn partial_cmp(&self, other: &Self) -> ::core::option::Option<::core::cmp::Ordering> {
+                #( #field_chains )*
+                ::core::cmp::PartialOrd::partial_cmp(&self.#tail_ident, &other.#tail_ident)
+            }
+        }
+    }
+}
+
+pub fn gen_ord(struct_info: &StructInfo) -> TokenStream {
+    let struct_name = struct_info.struct_name;
+    let (impl_generics, ty_generics, _) = struct_info.struct_generics.split_for_impl();
+
+    let mut bounds = header_bounds(struct_info, &quote! { ::core::cmp::Ord });
+    bounds.extend(tail_bound(struct_info, &quote! { ::core::cmp::Ord }));
+    let where_clause = merged_where_clause(struct_info, bounds);
+
+    let field_chains: Vec<TokenStream> = struct_info
+        .header_field_idents
+        .iter()
+        .map(|ident| {
+            quote! {
+                match ::core::cmp::Ord::cmp(&self.#ident, &other.#ident) {
+                    ::core::cmp::Ordering::Equal => {}
+                    ord => return ord,
+                }
+            }
+        })
+        .collect();
+    let tail_ident = &struct_info.tail_field_ident;
+
+    quote! {
+        impl #impl_generics ::core::cmp::Ord for #struct_name #ty_generics #where_clause {
+            fn cmp(&self, other: &Self) -> ::core::cmp::Ordering {
+                #( #field_chains )*
+                ::core::cmp::Ord::cmp(&self.#tail_ident, &other.#tail_ident)
             }
         }
     }

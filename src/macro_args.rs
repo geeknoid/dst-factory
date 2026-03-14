@@ -4,6 +4,10 @@ use syn::{
     parse::{Parse, ParseStream, discouraged::Speculative},
 };
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "macro options are naturally represented as independent feature flags"
+)]
 pub struct MacroArgs {
     pub base_factory_name: Ident,
     pub base_destructurer_name: Ident,
@@ -13,6 +17,10 @@ pub struct MacroArgs {
     pub no_std: bool,
     pub deserialize: bool,
     pub clone: bool,
+    pub debug: bool,
+    pub eq: bool,
+    pub ord: bool,
+    pub hash: bool,
     pub generic_name: Ident,
 }
 
@@ -26,6 +34,10 @@ impl Default for MacroArgs {
             no_std: false,
             deserialize: false,
             clone: false,
+            debug: false,
+            eq: false,
+            ord: false,
+            hash: false,
             generic_name: Ident::new("G", proc_macro2::Span::call_site()),
         }
     }
@@ -79,6 +91,10 @@ impl Parse for MacroArgs {
             if ident != "no_std"
                 && ident != "deserialize"
                 && ident != "clone"
+                && ident != "debug"
+                && ident != "eq"
+                && ident != "ord"
+                && ident != "hash"
                 && ident != "pub"
                 && ident != "generic"
                 && ident != "destructurer"
@@ -117,6 +133,26 @@ impl Parse for MacroArgs {
         if try_consume_keyword(input, "clone")? {
             result.clone = true;
             consume_trailing_comma(input, "clone")?;
+        }
+
+        if try_consume_keyword(input, "debug")? {
+            result.debug = true;
+            consume_trailing_comma(input, "debug")?;
+        }
+
+        if try_consume_keyword(input, "eq")? {
+            result.eq = true;
+            consume_trailing_comma(input, "eq")?;
+        }
+
+        if try_consume_keyword(input, "ord")? {
+            result.ord = true;
+            consume_trailing_comma(input, "ord")?;
+        }
+
+        if try_consume_keyword(input, "hash")? {
+            result.hash = true;
+            consume_trailing_comma(input, "hash")?;
         }
 
         if let Some(name) = parse_keyword_value(input, "generic")? {
