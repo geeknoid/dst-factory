@@ -11,8 +11,8 @@
 //! flexible array members. But unfortunately, Rust doesn't provide an out-of-the-box way to allocate
 //! instances of such types. This is where this crate comes in.
 //!
-//! You can apply the #[[`macro@make_dst_factory`]] attribute to your DST structs, which causes factory
-//! functions to be produced that let you easily and safely create instances of your DSTs.
+//! You can apply the #[[`macro@make_dst_factory`]] attribute to your DST structs, which generates factory
+//! functions that let you easily and safely create instances of your DSTs.
 //!
 //! # Why Should You Care?
 //!
@@ -25,7 +25,7 @@
 //!
 //! # Where to Use DSTs?
 //!
-//! It can be hard or tedious to discover where in your codebase there re opportunities to use DSTs.
+//! It can be hard or tedious to discover where in your codebase there are opportunities to use DSTs.
 //! You can give the following prompt to your favorite AI to have it find candidate structs that
 //! can be upgraded to a DST.
 //!
@@ -121,6 +121,7 @@
 //! let b = User::build(33, "Bob");
 //! ```
 //! And finally, here's an example using a trait object as the last field of a struct:
+//!
 //! ```rust
 //! use dst_factory::make_dst_factory;
 //!
@@ -166,8 +167,7 @@
 //!
 //! # Smart Pointers
 //!
-//! The macro generates factory functions for three smart pointer types, each constructed
-//! in a **single allocation**:
+//! The macro generates factory functions for three smart pointer types:
 //!
 //! | Pointer | Factory suffix | Use case |
 //! |---------|---------------|----------|
@@ -205,11 +205,11 @@
 //! assert_eq!(&shared.name, "Dora");
 //! ```
 //!
-//! In addition to the factory methods, the macro always generates `into_arc` and `into_rc`
+//! As shown above, in addition to the factory methods, the macro always generates the `into_arc` and `into_rc`
 //! associated functions that convert a `Box<Self>` into `Arc<Self>` or `Rc<Self>` while
 //! preserving the inline DST layout.
 //!
-//! ## Attribute Features
+//! # Attribute Features
 //!
 //! The common use case for the #[[`macro@make_dst_factory`]] attribute is to not pass any arguments.
 //! This results in functions called `build`, `build_arc`, and `build_rc` when using a string
@@ -217,7 +217,7 @@
 //! `build_arc_from_slice`, `build_rc_from_slice`, and `destructure` when using an array as the
 //! last field of the struct.
 //!
-//! The generated functions are private by default and have the following signatures:
+//! The generated functions are private by default and have the following approximate signatures:
 //!
 //! ```ignore
 //! // for arrays
@@ -273,28 +273,40 @@
 //! ```
 //!
 //! The attribute lets you control the name of the generated functions, their
-//! visibility, and whether to generate code for the `no_std` environment. The general
-//! grammar is:
+//! visibility, and whether to generate code for the `no_std` environment, along with
+//! which traits to automatically implement for your type. The general grammar is:
 //!
 //! ```ignore
-//! #[make_dst_factory(<base_factory_name> [, destructurer=<destructurer_name>] [, iterator=<iterator_name>] [, <visibility>] [, no_std] [, deserialize] [, clone] [, debug] [, eq] [, ord] [, hash] [, generic=<generic_name>])]
+//! #[make_dst_factory(
+//!     <base_factory_name>
+//!     [, destructurer=<destructurer_name>]
+//!     [, iterator=<iterator_name>]
+//!     [, generic=<generic_name>]
+//!     [, <visibility>]
+//!     [, no_std]
+//!     [, deserialize]
+//!     [, clone]
+//!     [, debug]
+//!     [, eq]
+//!     [, ord]
+//!     [, hash]
+//! )]
 //! ```
 //!
 //! Some examples:
 //!
 //! ```ignore
-//! // Public factories: build, build_from_slice, build_arc, build_arc_from_slice,
-//! // build_rc, build_rc_from_slice, and destructure.
+//! // Make all generated functions public.
 //! #[make_dst_factory(pub)]
 //!
-//! // Custom base name: create, create_from_slice, create_arc, create_arc_from_slice,
-//! // create_rc, create_rc_from_slice, and destructure.
+//! // Custom base name for the generated functions giving `create`, `create_from_slice`, `create_arc`, `create_arc_from_slice`,
+//! // `create_rc`, and `create_rc_from_slice`.
 //! #[make_dst_factory(create)]
 //!
 //! // Custom destructurer name.
 //! #[make_dst_factory(create, destructurer = destroy)]
 //!
-//! // Public with custom name.
+//! // Public functions with custom name.
 //! #[make_dst_factory(create, pub)]
 //!
 //! // Support the `no_std` environment.
@@ -304,11 +316,10 @@
 //! #[make_dst_factory(create, no_std, generic=X)]
 //! ```
 //!
-//! # Trait Implementations
+//! ## Trait Implementations
 //!
-//! Rust's standard `#[derive(...)]` doesn't work for DST structs because the derive macros
-//! can't handle unsized types. The #[[`macro@make_dst_factory`]] attribute provides flags to
-//! generate these trait implementations:
+//! Rust's standard `#[derive(...)]` often doesn't work for DST structs. The #[[`macro@make_dst_factory`]] attribute provides
+//! flags to generate these trait implementations:
 //!
 //! | Flag | Trait(s) generated | Notes |
 //! |------|-------------------|-------|
@@ -318,10 +329,9 @@
 //! | `ord` | `PartialOrd` and `Ord` for the struct | Compares all fields lexicographically |
 //! | `hash` | `Hash` for the struct | Hashes all fields |
 //!
-//! All flags work with both named and tuple structs, and with `str`, `[T]`, and `dyn Trait`
-//! tails. For `dyn Trait` tails, the generated where clauses require the trait object to
+//! When the last field of the struct is a `dyn Trait`, the generated `where` clauses require the trait object to
 //! implement the relevant trait (e.g. `dyn MyTrait: Debug`). The `clone` flag is the
-//! exception; it is not supported for `dyn Trait` tails since there is no way to clone
+//! exception; it is not supported for `dyn Trait` since there is no way to clone
 //! a concrete type through a trait object reference.
 //!
 //! ```rust
@@ -339,17 +349,15 @@
 //! assert_eq!(format!("{:?}", &*msg), "Message { id: 1, text: \"hello\" }");
 //! ```
 //!
-//! # Serde Support
+//! ## Serde Support
 //!
-//! DST structs work naturally with `#[derive(Serialize)]` from serde, since serialization
-//! only requires a reference. However, `#[derive(Deserialize)]` cannot work because the
-//! standard derive tries to construct the struct directly, which is impossible for unsized types.
+//! DST structs work naturally with serde's `#[derive(Serialize)]`, since serialization
+//! only requires a reference. However, `#[derive(Deserialize)]` does not work with DSTs,
+//! so special support is needed instead.
 //!
 //! Passing the `deserialize` flag in the attribute generates a
 //! [`Deserialize`](https://docs.rs/serde/latest/serde/trait.Deserialize.html) implementation
-//! for `Box<T>` that uses the macro-generated factory functions to construct the struct.
-//! All standard `#[serde(...)]` field attributes (such as `rename`, `default`, `skip`, etc.)
-//! are fully supported.
+//! for `Box<T>`.
 //!
 //! ```ignore
 //! use dst_factory::make_dst_factory;
@@ -372,12 +380,10 @@
 //! assert_eq!(&restored.text, "hello");
 //! ```
 //!
-//! ## Deserializing into `Arc` and `Rc`
-//!
-//! Rust's orphan rules prevent implementing `Deserialize` for `Arc<T>` or `Rc<T>` directly
-//! (they are not `#[fundamental]` like `Box<T>`). Instead, the `deserialize` flag generates
-//! helper functions `deserialize_arc` and `deserialize_rc` that can be used with serde's
-//! `#[serde(deserialize_with = "...")]` attribute:
+//! Rust's orphan rules prevent implementing `Deserialize` for `Arc<T>` or `Rc<T>`.
+//! Instead, the `deserialize` flag generates helper functions `deserialize_arc` and
+//! `deserialize_rc` that can be used with serde's `#[serde(deserialize_with = "...")]`
+//! attribute:
 //!
 //! ```ignore
 //! use dst_factory::make_dst_factory;
@@ -402,9 +408,8 @@
 //! }
 //! ```
 //!
-//! Serde support works with both named and tuple structs, and with both `str` and `[T]`
-//! slice tails. It is not supported for `dyn Trait` tails, since there is no way to
-//! reconstruct the concrete type from serialized data.
+//! Deserialization is not supported when the last field of the struct is a `dyn Trait`
+//! since there is no way to reconstruct the concrete type from serialized data.
 //!
 //! # Other Features
 //!
@@ -418,12 +423,11 @@
 //! The #[[`macro@make_dst_factory`]] attribute produces a compile-time error if:
 //!
 //! - It's applied to anything other than a regular struct or a tuple struct.
-//! - Its arguments are malformed (e.g., incorrect visibility keyword, too many arguments).
+//! - Its arguments are malformed (e.g., incorrect visibility keyword, too many arguments, etc.).
 //! - The struct has no fields.
 //! - The last field of the struct is not a slice (`[T]`), a string (`str`), or a trait object (`dyn Trait`).
 //! - The resulting struct exceeds the maximum size allowed of `isize::MAX`.
-//! - The `deserialize` flag is used on a struct with a `dyn Trait` tail.
-//! - The `clone` flag is used on a struct with a `dyn Trait` tail.
+//! - The `deserialize` or 'clone' flag are used on a struct whose last field is a trait object.
 //!
 //! # Acknowledgments
 //!
