@@ -12,7 +12,17 @@ use crate::common::StructInfo;
 /// so serde's full attribute vocabulary works naturally.
 ///
 /// The caller must reject trait object tails before invoking this function.
-pub fn gen_deserialize(struct_info: &StructInfo, input_struct: &ItemStruct, owned_tail_type: &Type, factory_name: &Ident) -> TokenStream {
+/// For `str` tails, the shadow struct uses `Cow<'de, str>` instead of `String` to avoid
+/// an intermediate allocation when the deserializer supports borrowing (e.g. `serde_json`
+/// deserializing from `&str`).
+pub fn gen_deserialize(
+    struct_info: &StructInfo,
+    input_struct: &ItemStruct,
+    owned_tail_type: &Type,
+    factory_name: &Ident,
+    box_path: &TokenStream,
+    borrow_tail: bool,
+) -> TokenStream {
     let struct_name = struct_info.struct_name;
     let shadow_name = format_ident!("__{}Intermediate", struct_name);
     let (_impl_generics, ty_generics, where_clause) = struct_info.struct_generics.split_for_impl();
@@ -22,9 +32,21 @@ pub fn gen_deserialize(struct_info: &StructInfo, input_struct: &ItemStruct, owne
     shadow.vis = syn::Visibility::Inherited;
     shadow.attrs.retain(|attr| attr.path().is_ident("serde"));
 
-    if let Some(tail) = shadow.fields.iter_mut().last() {
-        tail.ty = owned_tail_type.clone();
+    let tail = shadow.fields.iter_mut().last().expect("struct has no fields");
+    tail.ty = owned_tail_type.clone();
+    if borrow_tail {
+        tail.attrs.push(syn::parse_quote!(#[serde(borrow)]));
     }
+
+    if borrow_tail {
+        shadow.generics.params.insert(0, syn::parse_quote!('__borrow));
+    }
+
+    let shadow_ty = if borrow_tail {
+        quote! { #shadow_name<'de> }
+    } else {
+        quote! { #shadow_name }
+    };
 
     let header_accesses: Vec<TokenStream> = struct_info
         .header_field_idents
@@ -38,12 +60,12 @@ pub fn gen_deserialize(struct_info: &StructInfo, input_struct: &ItemStruct, owne
             #[derive(::serde::Deserialize)]
             #shadow
 
-            impl<'de> ::serde::Deserialize<'de> for ::std::boxed::Box<#struct_name #ty_generics> #where_clause {
+            impl<'de> ::serde::Deserialize<'de> for #box_path<#struct_name #ty_generics> #where_clause {
                 fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
                 where
                     D: ::serde::Deserializer<'de>,
                 {
-                    let intermediate = <#shadow_name as ::serde::Deserialize>::deserialize(deserializer)?;
+                    let intermediate = <#shadow_ty as ::serde::Deserialize>::deserialize(deserializer)?;
                     ::core::result::Result::Ok(#struct_name::#factory_name(#( #header_accesses, )* &intermediate.#tail_ident))
                 }
             }
@@ -68,6 +90,7 @@ pub fn gen_deserialize_fn(
     shadow_suffix: &str,
     wrapper_path: &TokenStream,
     visibility: &syn::Visibility,
+    borrow_tail: bool,
 ) -> TokenStream {
     let struct_name = struct_info.struct_name;
     let shadow_name = format_ident!("__{struct_name}{shadow_suffix}");
@@ -78,9 +101,21 @@ pub fn gen_deserialize_fn(
     shadow.vis = syn::Visibility::Inherited;
     shadow.attrs.retain(|attr| attr.path().is_ident("serde"));
 
-    if let Some(tail) = shadow.fields.iter_mut().last() {
-        tail.ty = owned_tail_type.clone();
+    let tail = shadow.fields.iter_mut().last().expect("struct has no fields");
+    tail.ty = owned_tail_type.clone();
+    if borrow_tail {
+        tail.attrs.push(syn::parse_quote!(#[serde(borrow)]));
     }
+
+    if borrow_tail {
+        shadow.generics.params.insert(0, syn::parse_quote!('__borrow));
+    }
+
+    let shadow_ty = if borrow_tail {
+        quote! { #shadow_name<'de> }
+    } else {
+        quote! { #shadow_name }
+    };
 
     let header_accesses: Vec<TokenStream> = struct_info
         .header_field_idents
@@ -102,7 +137,7 @@ pub fn gen_deserialize_fn(
             #[derive(::serde::Deserialize)]
             #shadow
 
-            let intermediate = <#shadow_name as ::serde::Deserialize>::deserialize(deserializer)?;
+            let intermediate = <#shadow_ty as ::serde::Deserialize>::deserialize(deserializer)?;
             ::core::result::Result::Ok(Self::#factory_name(#( #header_accesses, )* &intermediate.#tail_ident))
         }
     }

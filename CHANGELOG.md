@@ -2,7 +2,13 @@
 
 ## 0.6.0 - 2026-03-14
 
-- Add support for factories that return Arc<T> and Rc<T>, in addition to the existing Box<T>
+- Add support for factories that return Arc<T> and Rc<T>, in addition to the existing Box<T>.
+
+- Add support to implement the Debug, Eq, PartialEq, and Hash traits for the DST.
+
+- Fix serde use in no_std.
+
+- Speed up deserialization for string tails by often avoiding an intermediate alloc during deserialization.
 
 ## 0.5.0 - 2026-02-18
 

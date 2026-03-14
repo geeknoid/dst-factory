@@ -1,0 +1,5 @@
+error: Expected comma after ord
+ --> tests/ui/no_comma_after_ord.rs:3:36
+  |
+3 | #[make_dst_factory(create, eq, ord no_std)]
+  |                                    ^^^^^^
