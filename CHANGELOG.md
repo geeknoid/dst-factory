@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0 - 2026-03-15
+
+- Add support for zero-initialized slices
+
 ## 0.6.0 - 2026-03-14
 
 - Add support for factories that return Arc<T> and Rc<T>, in addition to the existing Box<T>.

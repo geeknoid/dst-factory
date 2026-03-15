@@ -525,6 +525,7 @@ fn no_std() {
     let t = trybuild::TestCases::new();
     t.pass("tests/ui/no_std.rs");
     t.pass("tests/ui/no_std_serde.rs");
+    t.pass("tests/ui/no_std_zeroable.rs");
 }
 
 #[test]
@@ -555,6 +556,8 @@ fn error_paths() {
     t.compile_fail("tests/ui/no_comma_after_eq.rs");
     t.compile_fail("tests/ui/no_comma_after_ord.rs");
     t.compile_fail("tests/ui/no_comma_after_hash.rs");
+    t.compile_fail("tests/ui/zeroable_str.rs");
+    t.compile_fail("tests/ui/no_comma_after_zeroable.rs");
 }
 
 // --- Clone tests ---
@@ -777,6 +780,30 @@ fn into_rc_trait_object_preserves_behavior() {
     let local: Rc<Node> = Node::into_rc(boxed);
     assert_eq!(local.count, 6);
     assert_eq!(local.producer.get_number(), 42);
+}
+
+// --- Zeroable tests ---
+// NOTE: ZeroableBuffer with [u8] tail is in test_zeroable.rs due to trybuild interaction
+
+#[make_dst_factory(zeroable)]
+struct ZeroableGeneric<T> {
+    id: u32,
+    data: [T],
+}
+
+#[test]
+fn zeroed_generic_u32() {
+    let instance: Box<ZeroableGeneric<u32>> = ZeroableGeneric::build_zeroed(7, 100);
+    assert_eq!(instance.id, 7);
+    assert_eq!(instance.data.len(), 100);
+    assert!(instance.data.iter().all(|&v| v == 0));
+}
+
+#[test]
+fn zeroed_zst_element() {
+    let instance: Box<ZeroableGeneric<()>> = ZeroableGeneric::build_zeroed(42, 1000);
+    assert_eq!(instance.id, 42);
+    assert_eq!(instance.data.len(), 1000);
 }
 
 // --- ExactSizeIterator and Debug tests ---
