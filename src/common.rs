@@ -657,7 +657,11 @@ pub fn factory_for_iter_arg(macro_args: &MacroArgs, struct_info: &StructInfo, ta
     let struct_name = &struct_info.struct_name;
     let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
 
-    let factory_doc = format!("Creates an instance of `{}<{struct_name}>`.", ptr.display_name);
+    let factory_doc = format!(
+        "Creates an instance of `{}<{struct_name}>`. \
+         Prefer `_from_slice` for vectors or arrays instead for better performance.",
+        ptr.display_name
+    );
 
     let zst_or_alloc = if ptr.name_suffix.is_empty() {
         // Box case
