@@ -220,7 +220,7 @@
 //! The generated functions are private by default and have the following approximate signatures:
 //!
 //! ```ignore
-//! // for arrays
+//! // for slices
 //! fn build<G>(field1, field2, ..., last_field: G) -> Box<Self>
 //! where
 //!     G: IntoIterator<Item = last_field_type>,
@@ -250,15 +250,25 @@
 //!
 //! fn destructure(this: Box<Self>) -> (Type1, Type2, ..., SelfIter);
 //!
-//! fn into_arc(this: Box<Self>) -> Arc<Self>;
-//! fn into_rc(this: Box<Self>) -> Rc<Self>;
+//! // when zeroable flag is set (slice tails only, requires bytemuck)
+//! fn build_zeroed(field1, field2, ..., len: usize) -> Box<Self>
+//! where
+//!     last_field_type: bytemuck::Zeroable;
+//!
+//! fn build_arc_zeroed(field1, field2, ..., len: usize) -> Arc<Self>
+//! where
+//!     last_field_type: bytemuck::Zeroable;
+//!
+//! fn build_rc_zeroed(field1, field2, ..., len: usize) -> Rc<Self>
+//! where
+//!     last_field_type: bytemuck::Zeroable;
 //!
 //! // for strings
 //! fn build(field1, field2, ..., last_field: impl AsRef<str>) -> Box<Self>;
 //! fn build_arc(field1, field2, ..., last_field: impl AsRef<str>) -> Arc<Self>;
 //! fn build_rc(field1, field2, ..., last_field: impl AsRef<str>) -> Rc<Self>;
 //!
-//! // for traits
+//! // for trait objects
 //! fn build(field1, field2, ..., last_field: G) -> Box<Self>
 //! where
 //!     G: TraitName + Sized;
@@ -270,6 +280,10 @@
 //! fn build_rc(field1, field2, ..., last_field: G) -> Rc<Self>
 //! where
 //!     G: TraitName + Sized;
+//!
+//! // generated for all DSTs
+//! fn into_arc(this: Box<Self>) -> Arc<Self>;
+//! fn into_rc(this: Box<Self>) -> Rc<Self>;
 //! ```
 //!
 //! The attribute lets you control the name of the generated functions, their
@@ -290,6 +304,7 @@
 //!     [, eq]
 //!     [, ord]
 //!     [, hash]
+//!     [, zeroable]
 //! )]
 //! ```
 //!
@@ -347,6 +362,27 @@
 //! let cloned = msg.clone();
 //! assert_eq!(msg, cloned);
 //! assert_eq!(format!("{:?}", &*msg), "Message { id: 1, text: \"hello\" }");
+//! ```
+//!
+//! ## Zero-Initialized Buffers
+//!
+//! When the last struct field is a `[T]`, the `zeroable` flag generates `build_zeroed`, `build_arc_zeroed`,
+//! and `build_rc_zeroed` factories that allocate the DST with a zero-initialized slice of a
+//! given length.
+//!
+//! ```ignore
+//! use dst_factory::make_dst_factory;
+//!
+//! #[make_dst_factory(zeroable)]
+//! struct Buffer {
+//!     cursor: usize,
+//!     data: [u8],
+//! }
+//!
+//! // Allocate a 1MB buffer with zero-initialized payload — no per-element initialization.
+//! let buf = Buffer::build_zeroed(0, 1_000_000);
+//! assert_eq!(buf.data.len(), 1_000_000);
+//! assert!(buf.data.iter().all(|&b| b == 0));
 //! ```
 //!
 //! ## Serde Support
@@ -427,7 +463,8 @@
 //! - The struct has no fields.
 //! - The last field of the struct is not a slice (`[T]`), a string (`str`), or a trait object (`dyn Trait`).
 //! - The resulting struct exceeds the maximum size allowed of `isize::MAX`.
-//! - The `deserialize` or 'clone' flag are used on a struct whose last field is a trait object.
+//! - The `deserialize` or `clone` flags are used on a struct whose last field is a trait object.
+//! - The `zeroable` flag is used on a struct whose last field is not a slice (`[T]`).
 //!
 //! # Acknowledgments
 //!

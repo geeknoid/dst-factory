@@ -21,6 +21,7 @@ pub struct MacroArgs {
     pub eq: bool,
     pub ord: bool,
     pub hash: bool,
+    pub zeroable: bool,
     pub generic_name: Ident,
 }
 
@@ -38,6 +39,7 @@ impl Default for MacroArgs {
             eq: false,
             ord: false,
             hash: false,
+            zeroable: false,
             generic_name: Ident::new("G", proc_macro2::Span::call_site()),
         }
     }
@@ -95,6 +97,7 @@ impl Parse for MacroArgs {
                 && ident != "eq"
                 && ident != "ord"
                 && ident != "hash"
+                && ident != "zeroable"
                 && ident != "pub"
                 && ident != "generic"
                 && ident != "destructurer"
@@ -153,6 +156,11 @@ impl Parse for MacroArgs {
         if try_consume_keyword(input, "hash")? {
             result.hash = true;
             consume_trailing_comma(input, "hash")?;
+        }
+
+        if try_consume_keyword(input, "zeroable")? {
+            result.zeroable = true;
+            consume_trailing_comma(input, "zeroable")?;
         }
 
         if let Some(name) = parse_keyword_value(input, "generic")? {

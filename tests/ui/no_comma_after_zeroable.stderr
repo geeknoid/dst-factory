@@ -1,0 +1,5 @@
+error: Expected comma after zeroable
+ --> tests/ui/no_comma_after_zeroable.rs:3:37
+  |
+3 | #[make_dst_factory(create, zeroable no_std)]
+  |                                     ^^^^^^

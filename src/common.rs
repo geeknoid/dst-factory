@@ -371,6 +371,24 @@ pub fn alloc(no_std: bool) -> TokenStream {
     }
 }
 
+pub fn alloc_zeroed(no_std: bool) -> TokenStream {
+    let (alloc_path, handle_alloc_error) = if no_std {
+        (quote! { ::alloc::alloc::alloc_zeroed }, quote! { panic!("out of memory") })
+    } else {
+        (
+            quote! { ::std::alloc::alloc_zeroed },
+            quote! { ::std::alloc::handle_alloc_error(layout) },
+        )
+    };
+
+    quote! {
+        let mem_ptr = #alloc_path(layout);
+        if mem_ptr.is_null() {
+            #handle_alloc_error
+        }
+    }
+}
+
 pub fn alloc_zst(box_path: &TokenStream, for_trait: bool) -> TokenStream {
     let mem_ptr = quote! { let mem_ptr = ::core::ptr::without_provenance_mut::<u8>(layout.align()); };
 
@@ -944,6 +962,114 @@ pub fn factory_for_trait_arg(macro_args: &MacroArgs, struct_info: &StructInfo, t
     }
 }
 
+pub fn factory_for_zeroed_arg(macro_args: &MacroArgs, struct_info: &StructInfo, tail_elem_type: &Type, ptr: &PtrKind) -> TokenStream {
+    let zeroable_bound: syn::WherePredicate = syn::parse_quote_spanned! {tail_elem_type.span()=>
+        #tail_elem_type: ::bytemuck::Zeroable
+    };
+
+    let mut factory_where_clause = struct_info.struct_generics.where_clause.as_ref().map_or_else(
+        || syn::WhereClause {
+            where_token: syn::token::Where::default(),
+            predicates: Punctuated::new(),
+        },
+        Clone::clone,
+    );
+    factory_where_clause.predicates.push(zeroable_bound);
+
+    let ptr_path = &ptr.ptr_path;
+    let data_ptr_ident = &ptr.data_ptr_ident;
+    let from_raw = &ptr.from_raw;
+
+    let tail_layout = tail_layout(tail_elem_type, struct_info.tail_field.ty.span());
+    let header_layout = header_layout(macro_args, struct_info, false);
+    let tuple_assignment = args_tuple_assignment(struct_info);
+    let header_field_writes = header_field_writes(struct_info);
+    let header_params = header_params(struct_info);
+
+    let factory_name = if ptr.name_suffix.is_empty() {
+        format_ident!("{}_zeroed", &macro_args.base_factory_name)
+    } else {
+        format_ident!("{}{}_zeroed", &macro_args.base_factory_name, ptr.name_suffix)
+    };
+    let visibility = &macro_args.visibility;
+
+    let tail_param = &struct_info.tail_param_ident;
+    let tail_field = &struct_info.tail_field_ident;
+    let struct_name = &struct_info.struct_name;
+
+    let factory_doc = format!(
+        "Creates an instance of `{}<{struct_name}>` with a zero-initialized tail of the given length.",
+        ptr.display_name,
+    );
+
+    // For Box: use alloc_zeroed (entire allocation zeroed, then write headers over the zeroed region).
+    // For Arc/Rc: use the normal refcount-initializing alloc, then zero just the tail.
+    let alloc_and_zero_tail = if ptr.name_suffix.is_empty() {
+        let alloc_z = alloc_zeroed(macro_args.no_std);
+        let box_path = &ptr.ptr_path;
+        quote! {
+            if layout.size() == 0 {
+                // ZST: no allocation needed, but we must preserve the requested `len`
+                // as the slice metadata (not 0).
+                let mem_ptr = ::core::ptr::without_provenance_mut::<u8>(layout.align());
+                let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
+                #box_path::from_raw(fat_ptr)
+            } else {
+                #alloc_z
+
+                let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((#data_ptr_ident, len));
+                ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
+
+                // alloc_zeroed already zeroed everything; just write the header fields.
+                #( #header_field_writes )*
+
+                #from_raw
+            }
+        }
+    } else {
+        let alloc_tokens = &ptr.alloc_tokens;
+        quote! {
+            #alloc_tokens
+
+            let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((#data_ptr_ident, len));
+            ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
+
+            #( #header_field_writes )*
+
+            // Zero-initialize the tail region. The refcount header was already
+            // initialized by the Arc/Rc alloc helper.
+            let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<u8>();
+            ::core::ptr::write_bytes(tail_ptr, 0, len * ::core::mem::size_of::<#tail_elem_type>());
+
+            #from_raw
+        }
+    };
+
+    let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
+
+    quote! {
+        #[doc = #factory_doc]
+        #[allow(clippy::let_unit_value)]
+        #[allow(clippy::zst_offset)]
+        #[allow(clippy::transmute_undefined_repr)]
+        #visibility fn #factory_name (
+            #( #header_params, )*
+            #tail_param: usize
+        ) -> #ptr_path<Self> #factory_where_clause {
+            #tuple_assignment
+            let len: usize = args.#tail_args_tuple_idx;
+
+            #header_layout
+            let layout = layout.extend(#tail_layout).expect("Struct exceeds maximum size allowed of isize::MAX").0;
+            let layout = layout.pad_to_align();
+
+            unsafe {
+                #alloc_and_zero_tail
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Orchestration
 // ---------------------------------------------------------------------------
@@ -1028,6 +1154,7 @@ fn gen_serde(
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "orchestration function that dispatches to all code generators")]
 pub fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynResult<TokenStream> {
     let macro_args = MacroArgs::parse(attr_args)?;
     let input_struct: ItemStruct = syn::parse2(item)?;
@@ -1054,6 +1181,12 @@ pub fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynRe
                 factories.push(factory_for_slice_arg(&macro_args, &struct_info, elem_type, ptr));
             }
 
+            if macro_args.zeroable {
+                for ptr in &ptr_kinds {
+                    factories.push(factory_for_zeroed_arg(&macro_args, &struct_info, elem_type, ptr));
+                }
+            }
+
             // Box-specific destructurer functionality (only for Box)
             factories.push(r#box::destructurer_with_iter(&macro_args, &struct_info));
             iterator_type = Some(r#box::destructurer_iterator_type(&macro_args, &struct_info, elem_type));
@@ -1072,6 +1205,13 @@ pub fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynRe
                 factories.push(factory_for_trait_arg(&macro_args, &struct_info, trait_path, ptr));
             }
         }
+    }
+
+    if macro_args.zeroable && !matches!(struct_info.tail_kind, TailKind::Slice(_)) {
+        return Err(syn::Error::new_spanned(
+            &input_struct,
+            "zeroable is only supported for DSTs with slice ([T]) tails",
+        ));
     }
 
     let mut serde_tokens: Option<TokenStream> = None;

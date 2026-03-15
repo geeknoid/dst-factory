@@ -1,7 +1,7 @@
 [package]
 resolver = "2"
 name = "dst-factory"
-version = "0.6.0"
+version = "0.7.0"
 description = "Rich support to safely create instances of Rust's Dynamically Sized Types"
 categories = ["memory-management", "no-std"]
 keywords = ["memory", "no-std", "ffi", "dst"]
@@ -23,6 +23,7 @@ quote = { version = "1.0.45", default-features = false, features = ["proc-macro"
 syn = { version = "2.0.117", default-features = false, features = ["full", "clone-impls", "parsing", "printing"] }
 
 [dev-dependencies]
+bytemuck = { version = "1.25.0", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0.149", default-features = false, features = ["std"] }
 trybuild = { version = "1.0.116", default-features = false, features = ["diff"] }

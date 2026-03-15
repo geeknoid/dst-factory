@@ -1,0 +1,8 @@
+error: zeroable is only supported for DSTs with slice ([T]) tails
+ --> tests/ui/zeroable_str.rs:4:1
+  |
+4 | / struct ZeroableStr {
+5 | |     id: i32,
+6 | |     data: str,
+7 | | }
+  | |_^
