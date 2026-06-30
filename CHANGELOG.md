@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0 - 2026-06-30
+
+- Add support for arena-based allocations.
+
 ## 0.7.0 - 2026-03-15
 
 - Add support for zero-initialized slices

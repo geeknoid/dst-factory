@@ -22,6 +22,7 @@ pub struct MacroArgs {
     pub ord: bool,
     pub hash: bool,
     pub zeroable: bool,
+    pub arena: bool,
     pub generic_name: Ident,
 }
 
@@ -40,22 +41,10 @@ impl Default for MacroArgs {
             ord: false,
             hash: false,
             zeroable: false,
+            arena: false,
             generic_name: Ident::new("G", proc_macro2::Span::call_site()),
         }
     }
-}
-
-/// Try to consume a keyword identifier from the input, returning `true` if matched.
-fn try_consume_keyword(input: ParseStream, keyword: &str) -> SynResult<bool> {
-    if input.peek(Ident) {
-        let ahead = input.fork();
-        let ident = ahead.parse::<Ident>()?;
-        if ident == keyword {
-            input.advance_to(&ahead);
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// Consume a trailing comma if the input is not empty.
@@ -68,110 +57,126 @@ fn consume_trailing_comma(input: ParseStream, after: &str) -> SynResult<()> {
     Ok(())
 }
 
-/// Parse `keyword = <ident>`, returning the value identifier.
-fn parse_keyword_value(input: ParseStream, keyword: &str) -> SynResult<Option<Ident>> {
-    if try_consume_keyword(input, keyword)? {
-        _ = input.parse::<Token![=]>()?;
-        let value = input
-            .parse::<Ident>()
-            .map_err(|_ignored| input.error(format!("Expected identifier after `{keyword}=`")))?;
-        consume_trailing_comma(input, keyword)?;
-        Ok(Some(value))
-    } else {
-        Ok(None)
+/// Parse `keyword = <ident>`, returning the value identifier. The (already
+/// matched) keyword token is consumed here.
+fn parse_keyword_value(input: ParseStream, keyword: &str) -> SynResult<Ident> {
+    _ = input.parse::<Ident>()?;
+    _ = input.parse::<Token![=]>()?;
+    let value = input
+        .parse::<Ident>()
+        .map_err(|_ignored| input.error(format!("Expected identifier after `{keyword}=`")))?;
+    consume_trailing_comma(input, keyword)?;
+    Ok(value)
+}
+
+/// The reserved identifiers that name a flag or `keyword = value` option and so
+/// cannot be used as a custom factory name.
+fn is_reserved_keyword(ident: &Ident) -> bool {
+    matches!(
+        ident.to_string().as_str(),
+        "no_std"
+            | "deserialize"
+            | "clone"
+            | "debug"
+            | "eq"
+            | "ord"
+            | "hash"
+            | "zeroable"
+            | "arena"
+            | "pub"
+            | "generic"
+            | "destructurer"
+            | "iterator"
+    )
+}
+
+/// Consume a boolean flag keyword, setting `slot` and rejecting duplicates. The
+/// (already matched) keyword token is consumed here.
+fn parse_flag(input: ParseStream, keyword: &str, slot: &mut bool, ident: &Ident) -> SynResult<()> {
+    if *slot {
+        return Err(syn::Error::new(ident.span(), format!("`{keyword}` specified more than once")));
     }
+    _ = input.parse::<Ident>()?;
+    *slot = true;
+    consume_trailing_comma(input, keyword)?;
+    Ok(())
 }
 
 impl Parse for MacroArgs {
     fn parse(input: ParseStream) -> SynResult<Self> {
         let mut result = Self::default();
 
-        // Check for factory name
+        // The optional factory name is positional: when present it must be the
+        // first argument. Every other option may appear in any order.
         if input.peek(Ident) {
             let ahead = input.fork();
             let ident = ahead.parse::<Ident>()?;
-            if ident != "no_std"
-                && ident != "deserialize"
-                && ident != "clone"
-                && ident != "debug"
-                && ident != "eq"
-                && ident != "ord"
-                && ident != "hash"
-                && ident != "zeroable"
-                && ident != "pub"
-                && ident != "generic"
-                && ident != "destructurer"
-                && ident != "iterator"
-            {
+            if !is_reserved_keyword(&ident) {
                 result.base_factory_name = ident;
                 input.advance_to(&ahead);
                 consume_trailing_comma(input, "factory name")?;
             }
         }
 
-        if let Some(name) = parse_keyword_value(input, "destructurer")? {
-            result.base_destructurer_name = name;
+        let mut seen_visibility = false;
+        let mut seen_destructurer = false;
+        let mut seen_iterator = false;
+        let mut seen_generic = false;
+
+        // Remaining arguments are order-independent.
+        while !input.is_empty() {
+            if input.peek(Token![pub]) {
+                if seen_visibility {
+                    return Err(input.error("`pub` specified more than once"));
+                }
+                result.visibility = input.parse().map_err(|_ignored| input.error("Failed to parse visibility"))?;
+                seen_visibility = true;
+                consume_trailing_comma(input, "visibility")?;
+                continue;
+            }
+
+            if input.peek(Ident) {
+                let ident = input.fork().parse::<Ident>()?;
+                match ident.to_string().as_str() {
+                    "destructurer" => {
+                        if seen_destructurer {
+                            return Err(syn::Error::new(ident.span(), "`destructurer` specified more than once"));
+                        }
+                        result.base_destructurer_name = parse_keyword_value(input, "destructurer")?;
+                        seen_destructurer = true;
+                    }
+                    "iterator" => {
+                        if seen_iterator {
+                            return Err(syn::Error::new(ident.span(), "`iterator` specified more than once"));
+                        }
+                        result.iterator_name = Some(parse_keyword_value(input, "iterator")?);
+                        seen_iterator = true;
+                    }
+                    "generic" => {
+                        if seen_generic {
+                            return Err(syn::Error::new(ident.span(), "`generic` specified more than once"));
+                        }
+                        result.generic_name = parse_keyword_value(input, "generic")?;
+                        seen_generic = true;
+                    }
+                    "no_std" => parse_flag(input, "no_std", &mut result.no_std, &ident)?,
+                    "deserialize" => parse_flag(input, "deserialize", &mut result.deserialize, &ident)?,
+                    "clone" => parse_flag(input, "clone", &mut result.clone, &ident)?,
+                    "debug" => parse_flag(input, "debug", &mut result.debug, &ident)?,
+                    "eq" => parse_flag(input, "eq", &mut result.eq, &ident)?,
+                    "ord" => parse_flag(input, "ord", &mut result.ord, &ident)?,
+                    "hash" => parse_flag(input, "hash", &mut result.hash, &ident)?,
+                    "zeroable" => parse_flag(input, "zeroable", &mut result.zeroable, &ident)?,
+                    "arena" => parse_flag(input, "arena", &mut result.arena, &ident)?,
+                    _ => return Err(input.error("Unexpected input")),
+                }
+                continue;
+            }
+
+            return Err(input.error("Unexpected input"));
         }
 
-        if let Some(name) = parse_keyword_value(input, "iterator")? {
-            result.iterator_name = Some(name);
-        }
-
-        // Check for visibility
-        if input.peek(Token![pub]) {
-            result.visibility = input.parse().map_err(|_ignored| input.error("Failed to parse visibility"))?;
-            consume_trailing_comma(input, "visibility")?;
-        }
-
-        if try_consume_keyword(input, "no_std")? {
-            result.no_std = true;
-            consume_trailing_comma(input, "no_std")?;
-        }
-
-        if try_consume_keyword(input, "deserialize")? {
-            result.deserialize = true;
-            consume_trailing_comma(input, "deserialize")?;
-        }
-
-        if try_consume_keyword(input, "clone")? {
-            result.clone = true;
-            consume_trailing_comma(input, "clone")?;
-        }
-
-        if try_consume_keyword(input, "debug")? {
-            result.debug = true;
-            consume_trailing_comma(input, "debug")?;
-        }
-
-        if try_consume_keyword(input, "eq")? {
-            result.eq = true;
-            consume_trailing_comma(input, "eq")?;
-        }
-
-        if try_consume_keyword(input, "ord")? {
-            result.ord = true;
-            consume_trailing_comma(input, "ord")?;
-        }
-
-        if try_consume_keyword(input, "hash")? {
-            result.hash = true;
-            consume_trailing_comma(input, "hash")?;
-        }
-
-        if try_consume_keyword(input, "zeroable")? {
-            result.zeroable = true;
-            consume_trailing_comma(input, "zeroable")?;
-        }
-
-        if let Some(name) = parse_keyword_value(input, "generic")? {
-            result.generic_name = name;
-        }
-
-        if input.is_empty() {
-            Ok(result)
-        } else {
-            Err(input.error("Unexpected input"))
-        }
+        Ok(result)
     }
 }
 
@@ -182,5 +187,57 @@ impl MacroArgs {
         } else {
             syn::parse2(attr_args)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MacroArgs;
+    use proc_macro2::TokenStream;
+    use quote::quote;
+
+    // `MacroArgs` cannot derive `Debug` (its `syn::Visibility` field only
+    // implements it under syn's `extra-traits` feature), so these helpers assert
+    // on a bound bool rather than via `unwrap` or `assert!(.is_ok())`.
+    fn parse_ok(args: TokenStream) {
+        let parsed = MacroArgs::parse(args).is_ok();
+        assert!(parsed, "expected the arguments to parse");
+    }
+
+    fn parse_err(args: TokenStream) {
+        let rejected = MacroArgs::parse(args).is_err();
+        assert!(rejected, "expected the arguments to be rejected");
+    }
+
+    #[test]
+    fn flags_parse_in_any_order() {
+        // Orderings the old fixed-sequence parser rejected.
+        parse_ok(quote! { pub, arena, clone, debug });
+        parse_ok(quote! { make, debug, clone, generic = T, pub });
+    }
+
+    #[test]
+    fn duplicate_flag_is_rejected() {
+        parse_err(quote! { clone, clone });
+    }
+
+    #[test]
+    fn duplicate_visibility_is_rejected() {
+        parse_err(quote! { pub, pub });
+    }
+
+    #[test]
+    fn duplicate_destructurer_is_rejected() {
+        parse_err(quote! { destructurer = a, destructurer = b });
+    }
+
+    #[test]
+    fn duplicate_iterator_is_rejected() {
+        parse_err(quote! { iterator = a, iterator = b });
+    }
+
+    #[test]
+    fn duplicate_generic_is_rejected() {
+        parse_err(quote! { generic = A, generic = B });
     }
 }

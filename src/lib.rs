@@ -174,6 +174,9 @@
 //! | [`Box<T>`] | *(none)* | Unique ownership |
 //! | [`Arc<T>`](std::sync::Arc) | `_arc` | Shared ownership, thread-safe (atomic refcount) |
 //! | [`Rc<T>`](std::rc::Rc) | `_rc` | Shared ownership, single-threaded (non-atomic refcount) |
+//! | [`multitude::Arc<T>`](https://docs.rs/multitude/latest/multitude/struct.Arc.html) | `_arena_arc` | Arena-allocated, shared, thread-safe (requires `arena` flag and the [`multitude`](https://crates.io/crates/multitude) crate) |
+//! | [`multitude::Box<T>`](https://docs.rs/multitude/latest/multitude/struct.Box.html) | `_arena_box` | Arena-allocated, unique ownership (requires `arena` flag) |
+//! | [`multitude::Rc<T>`](https://docs.rs/multitude/latest/multitude/struct.Rc.html) | `_arena_rc` | Arena-allocated, shared, single-threaded (requires `arena` flag) |
 //!
 //! ```rust
 //! use dst_factory::make_dst_factory;
@@ -305,6 +308,7 @@
 //!     [, ord]
 //!     [, hash]
 //!     [, zeroable]
+//!     [, arena]
 //! )]
 //! ```
 //!
@@ -329,6 +333,12 @@
 //!
 //! // Custom generic type name.
 //! #[make_dst_factory(create, no_std, generic=X)]
+//!
+//! // Enable arena allocation (requires `multitude` crate in user's dependencies).
+//! #[make_dst_factory(arena)]
+//!
+//! // Combine arena with other flags.
+//! #[make_dst_factory(pub, arena, clone, debug)]
 //! ```
 //!
 //! ## Trait Implementations
@@ -362,6 +372,107 @@
 //! let cloned = msg.clone();
 //! assert_eq!(msg, cloned);
 //! assert_eq!(format!("{:?}", &*msg), "Message { id: 1, text: \"hello\" }");
+//! ```
+//!
+//! ## Arena Allocation
+//!
+//! The `arena` flag enables factory methods that allocate DSTs into a
+//! [`multitude`](https://crates.io/crates/multitude) arena, returning
+//! [`multitude::Arc<T>`](https://docs.rs/multitude/latest/multitude/struct.Arc.html),
+//! [`multitude::Box<T>`](https://docs.rs/multitude/latest/multitude/struct.Box.html),
+//! or [`multitude::Rc<T>`](https://docs.rs/multitude/latest/multitude/struct.Rc.html)
+//! smart pointers. Each keeps its data alive via per-chunk reference counting and
+//! can outlive the arena it was allocated from.
+//!
+//! To use this feature, add both `dst-factory` and `multitude` to your `Cargo.toml`:
+//!
+//! ```toml
+//! [dependencies]
+//! dst-factory = "0.8"
+//! multitude = { version = "0.5", features = ["dst"] }
+//! ```
+//!
+//! Then use the `arena` flag:
+//!
+//! ```ignore
+//! use dst_factory::make_dst_factory;
+//! use multitude::{Arena, Arc};
+//!
+//! #[make_dst_factory(arena)]
+//! struct User {
+//!     age: u8,
+//!     name: str,
+//! }
+//!
+//! let arena = Arena::new();
+//!
+//! // Arena-allocated DST — bump allocation, no lifetimes
+//! let alice: Arc<User> = User::build_arena_arc(&arena, 33, "Alice");
+//! let bob: Arc<User>   = User::build_arena_arc(&arena, 25, "Bob");
+//!
+//! assert_eq!(&alice.name, "Alice");
+//! assert_eq!(bob.age, 25);
+//!
+//! // The Arc outlives the arena
+//! drop(arena);
+//! assert_eq!(&alice.name, "Alice"); // still valid
+//! ```
+//!
+//! The `arena` flag generates arena factories for each `multitude` smart pointer:
+//! `multitude::Arc` (suffix `_arena_arc`), `multitude::Box` (`_arena_box`), and
+//! `multitude::Rc` (`_arena_rc`). The signatures below show the `Arc` variant; the
+//! `Box`/`Rc` variants are identical apart from the suffix and return type:
+//!
+//! ```ignore
+//! // for strings
+//! fn build_arena_arc(arena: &multitude::Arena, field1, ..., last_field: impl AsRef<str>) -> multitude::Arc<Self>;
+//!
+//! // for arrays
+//! fn build_arena_arc<G>(arena: &multitude::Arena, field1, ..., last_field: G) -> multitude::Arc<Self>
+//! where
+//!     G: IntoIterator<Item = last_field_type>,
+//!     <G as IntoIterator>::IntoIter: ExactSizeIterator;
+//!
+//! fn build_arena_arc_from_slice(arena: &multitude::Arena, field1, ..., last_field: &[T]) -> multitude::Arc<Self>
+//! where
+//!     T: Copy + Sized;
+//!
+//! // for trait objects
+//! fn build_arena_arc<G>(arena: &multitude::Arena, field1, ..., last_field: G) -> multitude::Arc<Self>
+//! where
+//!     G: TraitName + Sized;
+//! ```
+//!
+//! The existing `build`, `build_arc`, and `build_rc` factories are always generated
+//! regardless of the `arena` flag.
+//!
+//! ### Arena Requirements
+//!
+//! - **`Send + Sync`**: `multitude::Arc` requires its payload to be `Send + Sync`,
+//!   so `build_arena_arc` carries a `where Self: Send + Sync` bound. For types
+//!   that are not `Send + Sync`, `build_arena_arc` is simply uncallable, while
+//!   `build_arena_box` and `build_arena_rc` remain usable. (This works for
+//!   generic DSTs such as `struct Node<T> { tail: [T] }` instantiated with a
+//!   non-`Send` `T`; a concrete struct whose tail is itself non-`Send` - e.g. a
+//!   `dyn Trait` tail without a `Send + Sync` bound - cannot use the `arena` flag
+//!   at all, because the `Send + Sync` bound on the concrete type is rejected at
+//!   compile time.)
+//! - **`dyn Trait` tails**: the trait must be annotated with multitude's
+//!   [`#[multitude::dst::pointee]`](https://docs.rs/multitude) attribute so that
+//!   `dyn Trait: multitude::dst::Pointee`. For the `build_arena_arc` variant the
+//!   trait must additionally be `Send + Sync`:
+//!
+//! ```ignore
+//! #[multitude::dst::pointee(crate = ::multitude::dst)]
+//! trait Renderer: Send + Sync {
+//!     fn render(&self) -> &str;
+//! }
+//!
+//! #[make_dst_factory(arena)]
+//! struct Widget {
+//!     id: u32,
+//!     renderer: dyn Renderer,
+//! }
 //! ```
 //!
 //! ## Zero-Initialized Buffers
