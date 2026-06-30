@@ -1,6 +1,7 @@
-49
+53
 _arc
 _rc
+allocator
 boolean
 CLI
 Clippy
@@ -36,13 +37,16 @@ rustdoc
 Serde
 serde
 serde's
+str
 struct
 structs
 subcommand
 toml
 TOML
 tuple
+uncallable
 unsized
+vtable
 workflow
 workflows
 workspace

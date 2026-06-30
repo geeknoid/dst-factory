@@ -425,7 +425,7 @@ struct PackedStruct {
 fn packed_struct() {
     let instance: Box<PackedStruct> = PackedStruct::build(0xDEAD_BEEF, "packed data");
 
-    // SAFETY: We are reading a packed field that is guaranteed to be aligned correctly
+    // SAFETY: `read_unaligned` has no alignment requirement; the pointer is valid and points to an initialized `u32`.
     let data = unsafe { read_unaligned(&raw const instance.data) };
 
     assert_eq!(data, 0xDEAD_BEEF);
@@ -1539,7 +1539,7 @@ fn arc_struct_from_iter_where_clause() {
 fn arc_packed_struct() {
     let instance: Arc<PackedStruct> = PackedStruct::build_arc(0xDEAD_BEEF, "packed data");
 
-    // SAFETY: We are reading a packed field that is guaranteed to be aligned correctly
+    // SAFETY: `read_unaligned` has no alignment requirement; the pointer is valid and points to an initialized `u32`.
     let data = unsafe { read_unaligned(&raw const instance.data) };
 
     assert_eq!(data, 0xDEAD_BEEF);
@@ -1847,7 +1847,7 @@ fn rc_struct_from_iter_where_clause() {
 fn rc_packed_struct() {
     let instance: Rc<PackedStruct> = PackedStruct::build_rc(0xDEAD_BEEF, "packed data");
 
-    // SAFETY: We are reading a packed field that is guaranteed to be aligned correctly
+    // SAFETY: `read_unaligned` has no alignment requirement; the pointer is valid and points to an initialized `u32`.
     let data = unsafe { read_unaligned(&raw const instance.data) };
 
     assert_eq!(data, 0xDEAD_BEEF);

@@ -35,7 +35,8 @@ pub fn destructurer_iterator_type(macro_args: &MacroArgs, struct_info: &StructIn
             fn next(&mut self) -> Option<Self::Item> {
                 if self.index >= self.len { return None; }
                 #[allow(clippy::zst_offset)]
-                let value = unsafe { self.ptr.add(self.index).read() };
+                // Unaligned read: the tail may be under-aligned (e.g. `#[repr(packed)]`).
+                let value = unsafe { self.ptr.add(self.index).read_unaligned() };
                 self.index += 1;
                 Some(value)
             }
@@ -58,10 +59,13 @@ pub fn destructurer_iterator_type(macro_args: &MacroArgs, struct_info: &StructIn
             fn drop(&mut self) {
                 unsafe {
                     while self.index < self.len {
-                        self.ptr.add(self.index).drop_in_place();
+                        // Unaligned read to drop: the tail may be under-aligned (e.g. `#[repr(packed)]`).
+                        let _ = self.ptr.add(self.index).read_unaligned();
                         self.index += 1;
                     }
-                    #dealloc_path(self.free_ptr, self.layout)
+                    if self.layout.size() != 0 {
+                        #dealloc_path(self.free_ptr, self.layout)
+                    }
                 }
             }
         }
@@ -94,13 +98,15 @@ pub fn destructurer_with_iter(macro_args: &MacroArgs, struct_info: &StructInfo) 
         ) -> ( #( #header_types, )* #iterator_name #ty_generics)
         {
             let layout = ::core::alloc::Layout::for_value(&*this);
-            let len = this.#tail_field.len();
             let this = #box_path::into_raw(this);
             unsafe {
+                // Raw pointers and unaligned reads throughout: forming a reference
+                // to a packed field (or an aligned read of one) would be unsound.
+                let len = (&raw const (*this).#tail_field).len();
                 (
-                    #( (&raw mut (*this).#header_fields).read(), )*
+                    #( (&raw mut (*this).#header_fields).read_unaligned(), )*
                     #iterator_name {
-                        ptr: (*this).#tail_field.as_mut_ptr(),
+                        ptr: (&raw mut (*this).#tail_field).cast(),
                         index: 0,
                         len,
                         free_ptr: this.cast(),

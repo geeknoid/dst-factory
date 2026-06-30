@@ -73,6 +73,77 @@ impl PtrKind {
     }
 }
 
+/// Encapsulates everything that varies between the `multitude` arena pointer
+/// types (`Arc`/`Box`/`Rc`) used by the `arena` flag's factory functions.
+pub struct ArenaPtrKind {
+    /// The suffix appended to factory names (`_arena_arc`, `_arena_box`, `_arena_rc`).
+    pub name_suffix: &'static str,
+    /// Human-readable name for doc comments (`multitude::Arc`, etc.).
+    pub display_name: &'static str,
+    /// Token stream for the smart pointer path (e.g. `::multitude::Arc`).
+    pub ptr_path: TokenStream,
+    /// The `Arena` method that allocates this pointer (`alloc_dst_arc`, etc.).
+    pub alloc_method: Ident,
+    /// Whether the underlying `Arena` method requires `Self: Send + Sync`
+    /// (true for `Arc`). When set, factories add a `where Self: Send + Sync`
+    /// bound so the method is merely uncallable - rather than a hard compile
+    /// error - for non-`Send`/`Sync` types, keeping the `Box`/`Rc` variants
+    /// usable for such types.
+    pub needs_send_sync: bool,
+}
+
+impl ArenaPtrKind {
+    pub fn arc() -> Self {
+        Self {
+            name_suffix: "_arena_arc",
+            display_name: "multitude::Arc",
+            ptr_path: quote! { ::multitude::Arc },
+            alloc_method: format_ident!("alloc_dst_arc"),
+            needs_send_sync: true,
+        }
+    }
+
+    pub fn boxed() -> Self {
+        Self {
+            name_suffix: "_arena_box",
+            display_name: "multitude::Box",
+            ptr_path: quote! { ::multitude::Box },
+            alloc_method: format_ident!("alloc_dst_box"),
+            needs_send_sync: false,
+        }
+    }
+
+    pub fn rc() -> Self {
+        Self {
+            name_suffix: "_arena_rc",
+            display_name: "multitude::Rc",
+            ptr_path: quote! { ::multitude::Rc },
+            alloc_method: format_ident!("alloc_dst_rc"),
+            needs_send_sync: false,
+        }
+    }
+
+    /// A trailing `, Self: Send + Sync` predicate to append to an existing
+    /// `where` clause (empty for `Box`/`Rc`).
+    fn send_sync_predicate(&self) -> TokenStream {
+        if self.needs_send_sync {
+            quote! { , Self: ::core::marker::Send + ::core::marker::Sync }
+        } else {
+            quote! {}
+        }
+    }
+
+    /// A standalone `where Self: Send + Sync` clause (empty for `Box`/`Rc`),
+    /// for factories that otherwise have no `where` clause.
+    fn send_sync_where(&self) -> TokenStream {
+        if self.needs_send_sync {
+            quote! { where Self: ::core::marker::Send + ::core::marker::Sync }
+        } else {
+            quote! {}
+        }
+    }
+}
+
 pub enum TailKind {
     Slice(Box<Type>),
     Str,
@@ -264,7 +335,19 @@ pub fn header_layout(macro_args: &MacroArgs, struct_info: &StructInfo, for_trait
 }
 
 pub fn tail_layout<T: ToTokens>(tail_type: &T, span: Span) -> TokenStream {
-    quote_spanned! { span => ::core::alloc::Layout::array::<#tail_type>(len).expect("Array exceeds maximum size allowed of isize::MAX") }
+    // Force the tail sub-layout's alignment to 1 so `Layout::extend` places it at
+    // the struct's real tail offset instead of re-aligning to the element's
+    // natural alignment. This matches the actual layout of both naturally-aligned
+    // and `#[repr(packed)]` structs.
+    quote_spanned! { span =>
+        ::core::alloc::Layout::from_size_align(
+            ::core::alloc::Layout::array::<#tail_type>(len)
+                .expect("Array exceeds maximum size allowed of isize::MAX")
+                .size(),
+            1,
+        )
+        .expect("Array exceeds maximum size allowed of isize::MAX")
+    }
 }
 
 pub fn dealloc_path(no_std: bool) -> TokenStream {
@@ -313,9 +396,47 @@ pub fn guard_type(macro_args: &MacroArgs) -> TokenStream {
         impl<T> Drop for Guard<T> {
             fn drop(&mut self) {
                 unsafe {
-                    let slice_ptr = ::core::ptr::slice_from_raw_parts_mut(self.tail_ptr, self.initialized);
-                    ::core::ptr::drop_in_place(slice_ptr);
-                    #dealloc_path(self.mem_ptr, self.layout);
+                    // Unaligned reads so the tail may be under-aligned (e.g. in a
+                    // `#[repr(packed)]` struct); `drop_in_place` on the slice would
+                    // require alignment.
+                    let mut i = 0;
+                    while i < self.initialized {
+                        let _ = self.tail_ptr.add(i).read_unaligned();
+                        i += 1;
+                    }
+                    if self.layout.size() != 0 {
+                        #dealloc_path(self.mem_ptr, self.layout);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Generates the drop guard used by the arena `[T]`-tail iterator factory.
+///
+/// Unlike the [`guard_type`] used for `Box`/`Arc`/`Rc`, the backing storage is
+/// owned by the arena and cannot be reclaimed, so this guard only drops the
+/// tail elements already written when a user iterator panics partway through;
+/// it never frees the allocation.
+pub fn arena_iter_guard_type() -> TokenStream {
+    quote! {
+        struct Guard<T> {
+            tail_ptr: *mut T,
+            initialized: usize,
+        }
+
+        impl<T> Drop for Guard<T> {
+            fn drop(&mut self) {
+                unsafe {
+                    // Unaligned reads so the tail may be under-aligned (e.g. in a
+                    // `#[repr(packed)]` struct); `drop_in_place` on the slice would
+                    // require alignment.
+                    let mut i = 0;
+                    while i < self.initialized {
+                        let _ = self.tail_ptr.add(i).read_unaligned();
+                        i += 1;
+                    }
                 }
             }
         }
@@ -371,6 +492,32 @@ pub fn alloc(no_std: bool) -> TokenStream {
     }
 }
 
+/// Emits `let mem_ptr = ...;` for a `Box`-backed DST: it allocates from the
+/// global allocator for a non-zero-sized layout, or yields a dangling but
+/// correctly aligned pointer for a zero-sized layout (the global allocator must
+/// not be called with a zero-sized layout). The same pointer feeds the normal
+/// initialization path, so length metadata and field moves are preserved even
+/// for zero-sized types.
+pub fn box_alloc_or_dangling(no_std: bool) -> TokenStream {
+    let (alloc_path, handle_alloc_error) = if no_std {
+        (quote! { ::alloc::alloc::alloc }, quote! { panic!("out of memory") })
+    } else {
+        (quote! { ::std::alloc::alloc }, quote! { ::std::alloc::handle_alloc_error(layout) })
+    };
+
+    quote! {
+        let mem_ptr = if layout.size() == 0 {
+            ::core::ptr::without_provenance_mut::<u8>(layout.align())
+        } else {
+            let mem_ptr = #alloc_path(layout);
+            if mem_ptr.is_null() {
+                #handle_alloc_error
+            }
+            mem_ptr
+        };
+    }
+}
+
 pub fn alloc_zeroed(no_std: bool) -> TokenStream {
     let (alloc_path, handle_alloc_error) = if no_std {
         (quote! { ::alloc::alloc::alloc_zeroed }, quote! { panic!("out of memory") })
@@ -389,21 +536,30 @@ pub fn alloc_zeroed(no_std: bool) -> TokenStream {
     }
 }
 
-pub fn alloc_zst(box_path: &TokenStream, for_trait: bool) -> TokenStream {
-    let mem_ptr = quote! { let mem_ptr = ::core::ptr::without_provenance_mut::<u8>(layout.align()); };
+/// Token stream naming a slice/str tail's element type (`Elem` for `[Elem]`,
+/// `u8` for `str`). Only meaningful for slice/str tails; trait-object tails carry
+/// a vtable rather than an element count and never reach the slice/str helpers.
+fn slice_str_elem(struct_info: &StructInfo) -> TokenStream {
+    match &struct_info.tail_kind {
+        TailKind::Slice(elem_type) => quote! { #elem_type },
+        TailKind::Str | TailKind::TraitObject(_) => quote! { u8 },
+    }
+}
 
-    let fat_ptr = if for_trait {
-        quote! { let fat_ptr = ::core::mem::transmute::<(*mut u8, *const ()), *mut Self>((mem_ptr, vtable)); }
-    } else {
-        quote! { let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, 0_usize)); }
-    };
-
-    let box_from_raw = quote! { #box_path::from_raw(fat_ptr) };
-
+/// Emits `let fat_ptr = ...;`, materializing a `*mut Self` fat pointer for a
+/// slice- or str-tailed DST from a thin data pointer `data` and an element/byte
+/// count `len`.
+///
+/// This uses the stable, transmute-free metadata-preserving pointer cast: a
+/// `*mut [Elem]` built with the correct length is `as`-cast to `*mut Self`, and
+/// the slice-length metadata carries through the cast unchanged. The
+/// `core::ptr::from_raw_parts` API that would express this directly is still
+/// unstable (rust-lang/rust#81513), so this cast is the soundest stable spelling.
+/// Trait-object tails carry a vtable instead of a length and still require
+/// `transmute`.
+fn slice_str_fat_ptr(tail_elem_type: &TokenStream, data: &TokenStream, len: &TokenStream) -> TokenStream {
     quote! {
-        #mem_ptr
-        #fat_ptr
-        #box_from_raw
+        let fat_ptr = ::core::ptr::slice_from_raw_parts_mut((#data).cast::<#tail_elem_type>(), #len) as *mut Self;
     }
 }
 
@@ -485,10 +641,14 @@ pub fn rc_alloc_and_init(no_std: bool) -> TokenStream {
 
 fn rebuilt_fat_ptr_from_existing_metadata(struct_info: &StructInfo, data_ptr_ident: &Ident) -> TokenStream {
     match &struct_info.tail_kind {
-        TailKind::Slice(_) | TailKind::Str => quote! {
-            let (_, metadata): (*mut u8, usize) = ::core::mem::transmute(src_ptr);
-            let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((#data_ptr_ident, metadata));
-        },
+        TailKind::Slice(_) | TailKind::Str => {
+            let elem = slice_str_elem(struct_info);
+            let fat_ptr = slice_str_fat_ptr(&elem, &quote! { #data_ptr_ident }, &quote! { metadata });
+            quote! {
+                let (_, metadata): (*mut u8, usize) = ::core::mem::transmute(src_ptr);
+                #fat_ptr
+            }
+        }
         TailKind::TraitObject(_) => quote! {
             let (_, metadata): (*mut u8, *const ()) = ::core::mem::transmute(src_ptr);
             let fat_ptr = ::core::mem::transmute::<(*mut u8, *const ()), *mut Self>((#data_ptr_ident, metadata));
@@ -587,37 +747,43 @@ pub fn factory_for_slice_arg(macro_args: &MacroArgs, struct_info: &StructInfo, t
     let factory_doc = format!("Creates an instance of `{}<{struct_name}>`.", ptr.display_name);
 
     let zst_or_alloc = if ptr.name_suffix.is_empty() {
-        // Box case
-        let zst_tokens = alloc_zst(&ptr.ptr_path, false);
+        // Box: allocate, or use a dangling pointer for a zero-sized layout.
+        let box_alloc = box_alloc_or_dangling(macro_args.no_std);
         quote! {
-            if layout.size() == 0 {
-                #zst_tokens
-            } else {
-                #alloc_tokens
+            #box_alloc
 
-                let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((#data_ptr_ident, len));
-                ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
+            let fat_ptr = ::core::ptr::slice_from_raw_parts_mut((#data_ptr_ident).cast::<#tail_elem_type>(), len) as *mut Self;
+            ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
 
-                #( #header_field_writes )*
+            #( #header_field_writes )*
 
-                let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#tail_elem_type>();
-                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+            let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#tail_elem_type>();
+            // Byte copy: the destination tail may be under-aligned (e.g. `#[repr(packed)]`).
+            ::core::ptr::copy_nonoverlapping(
+                s.as_ptr().cast::<u8>(),
+                tail_ptr.cast::<u8>(),
+                len * ::core::mem::size_of::<#tail_elem_type>(),
+            );
 
-                #from_raw
-            }
+            #from_raw
         }
     } else {
         // Arc/Rc always allocate
         quote! {
             #alloc_tokens
 
-            let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((#data_ptr_ident, len));
+            let fat_ptr = ::core::ptr::slice_from_raw_parts_mut((#data_ptr_ident).cast::<#tail_elem_type>(), len) as *mut Self;
             ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
 
             #( #header_field_writes )*
 
             let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#tail_elem_type>();
-            ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+            // Byte copy: the destination tail may be under-aligned (e.g. `#[repr(packed)]`).
+            ::core::ptr::copy_nonoverlapping(
+                s.as_ptr().cast::<u8>(),
+                tail_ptr.cast::<u8>(),
+                len * ::core::mem::size_of::<#tail_elem_type>(),
+            );
 
             #from_raw
         }
@@ -681,70 +847,50 @@ pub fn factory_for_iter_arg(macro_args: &MacroArgs, struct_info: &StructInfo, ta
         ptr.display_name
     );
 
-    let zst_or_alloc = if ptr.name_suffix.is_empty() {
-        // Box case
-        let zst_tokens = alloc_zst(&ptr.ptr_path, false);
-        quote! {
-            if layout.size() == 0 {
-                #zst_tokens
-            } else {
-                #alloc_tokens
+    // Shared tail-fill/finish for Box/Arc/Rc; only the allocation prologue
+    // differs. Header fields are written only after the tail is initialized: if
+    // the iterator panics, they stay owned by `args` and are dropped during
+    // unwinding rather than leaked.
+    let fill_and_finish = quote! {
+        let fat_ptr = ::core::ptr::slice_from_raw_parts_mut((#data_ptr_ident).cast::<#tail_type>(), len) as *mut Self;
+        ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
 
-                let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((#data_ptr_ident, len));
-                ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
+        let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#tail_type>();
+        let mut guard = Guard { mem_ptr, tail_ptr, layout: #guard_layout, initialized: 0 };
 
-                #( #header_field_writes )*
-
-                let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#tail_type>();
-                let mut guard = Guard { mem_ptr, tail_ptr, layout: #guard_layout, initialized: 0 };
-
-                iter.for_each(|element| {
-                    if guard.initialized == len {
-                        panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
-                    }
-
-                    ::core::ptr::write(tail_ptr.add(guard.initialized), element);
-                    guard.initialized += 1;
-                });
-
-                if guard.initialized != len {
-                    panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
-                }
-
-                ::core::mem::forget(guard);
-
-                #from_raw
-            }
-        }
-    } else {
-        // Arc/Rc always allocate
-        quote! {
-            #alloc_tokens
-
-            let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((#data_ptr_ident, len));
-            ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
-
-            #( #header_field_writes )*
-
-            let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#tail_type>();
-            let mut guard = Guard { mem_ptr, tail_ptr, layout: #guard_layout, initialized: 0 };
-
-            iter.for_each(|element| {
-                if guard.initialized == len {
-                    panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
-                }
-
-                ::core::ptr::write(tail_ptr.add(guard.initialized), element);
-                guard.initialized += 1;
-            });
-
-            if guard.initialized != len {
+        iter.for_each(|element| {
+            if guard.initialized == len {
                 panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
             }
 
-            ::core::mem::forget(guard);
+            // Unaligned write: the tail may be under-aligned (e.g. `#[repr(packed)]`).
+            ::core::ptr::write_unaligned(tail_ptr.add(guard.initialized), element);
+            guard.initialized += 1;
+        });
 
-            #from_raw
+        if guard.initialized != len {
+            panic!("Mismatch between iterator-reported length and the number of items produced by the iterator");
+        }
+
+        #( #header_field_writes )*
+
+        ::core::mem::forget(guard);
+
+        #from_raw
+    };
+
+    let zst_or_alloc = if ptr.name_suffix.is_empty() {
+        // Box: allocate, or use a dangling pointer for a zero-sized layout.
+        let box_alloc = box_alloc_or_dangling(macro_args.no_std);
+        quote! {
+            #box_alloc
+            #fill_and_finish
+        }
+    } else {
+        // Arc/Rc always allocate (the refcount header makes the layout non-zero).
+        quote! {
+            #alloc_tokens
+            #fill_and_finish
         }
     };
 
@@ -806,31 +952,27 @@ pub fn factory_for_str_arg(macro_args: &MacroArgs, struct_info: &StructInfo, ptr
     let factory_doc = format!("Creates an instance of `{}<{struct_name}>`.", ptr.display_name);
 
     let zst_or_alloc = if ptr.name_suffix.is_empty() {
-        // Box case
-        let zst_tokens = alloc_zst(&ptr.ptr_path, false);
+        // Box: allocate, or use a dangling pointer for a zero-sized layout.
+        let box_alloc = box_alloc_or_dangling(macro_args.no_std);
         quote! {
-            if layout.size() == 0 {
-                #zst_tokens
-            } else {
-                #alloc_tokens
+            #box_alloc
 
-                let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((#data_ptr_ident, len));
-                ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
+            let fat_ptr = ::core::ptr::slice_from_raw_parts_mut((#data_ptr_ident).cast::<u8>(), len) as *mut Self;
+            ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
 
-                #( #header_field_writes )*
+            #( #header_field_writes )*
 
-                let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<u8>();
-                ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+            let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<u8>();
+            ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
 
-                #from_raw
-            }
+            #from_raw
         }
     } else {
         // Arc/Rc always allocate
         quote! {
             #alloc_tokens
 
-            let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((#data_ptr_ident, len));
+            let fat_ptr = ::core::ptr::slice_from_raw_parts_mut((#data_ptr_ident).cast::<u8>(), len) as *mut Self;
             ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
 
             #( #header_field_writes )*
@@ -895,25 +1037,21 @@ pub fn factory_for_trait_arg(macro_args: &MacroArgs, struct_info: &StructInfo, t
     let factory_doc = format!("Builds an instance of `{}<{struct_name}>`.", ptr.display_name);
 
     let zst_or_alloc = if ptr.name_suffix.is_empty() {
-        // Box case
-        let zst_tokens = alloc_zst(&ptr.ptr_path, true); // Note: true for trait objects
+        // Box: allocate, or use a dangling pointer for a zero-sized layout.
+        let box_alloc = box_alloc_or_dangling(macro_args.no_std);
         quote! {
-            if layout.size() == 0 {
-                #zst_tokens
-            } else {
-                #alloc_tokens
+            #box_alloc
 
-                let fat_ptr = ::core::mem::transmute::<(*mut u8, *const ()), *mut Self>((#data_ptr_ident, vtable));
-                ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
+            let fat_ptr = ::core::mem::transmute::<(*mut u8, *const ()), *mut Self>((#data_ptr_ident, vtable));
+            ::core::debug_assert_eq!(::core::alloc::Layout::for_value(&*fat_ptr), layout);
 
-                #( #header_field_writes )*
+            #( #header_field_writes )*
 
-                let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#trait_generic>();
-                ::core::ptr::copy_nonoverlapping(::core::ptr::addr_of!(s), tail_ptr, 1);
-                ::core::mem::forget(s);
+            let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#trait_generic>();
+            ::core::ptr::copy_nonoverlapping(::core::ptr::addr_of!(s), tail_ptr, 1);
+            ::core::mem::forget(s);
 
-                #from_raw
-            }
+            #from_raw
         }
     } else {
         // Arc/Rc always allocate
@@ -1006,14 +1144,16 @@ pub fn factory_for_zeroed_arg(macro_args: &MacroArgs, struct_info: &StructInfo, 
     // For Arc/Rc: use the normal refcount-initializing alloc, then zero just the tail.
     let alloc_and_zero_tail = if ptr.name_suffix.is_empty() {
         let alloc_z = alloc_zeroed(macro_args.no_std);
-        let box_path = &ptr.ptr_path;
         quote! {
             if layout.size() == 0 {
-                // ZST: no allocation needed, but we must preserve the requested `len`
-                // as the slice metadata (not 0).
+                // Zero-sized layout: no allocation, but preserve `len` as the
+                // slice metadata and move the header fields in.
                 let mem_ptr = ::core::ptr::without_provenance_mut::<u8>(layout.align());
                 let fat_ptr = ::core::mem::transmute::<(*mut u8, usize), *mut Self>((mem_ptr, len));
-                #box_path::from_raw(fat_ptr)
+
+                #( #header_field_writes )*
+
+                #from_raw
             } else {
                 #alloc_z
 
@@ -1065,6 +1205,289 @@ pub fn factory_for_zeroed_arg(macro_args: &MacroArgs, struct_info: &StructInfo, 
 
             unsafe {
                 #alloc_and_zero_tail
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Arena factory generators (build_arena_arc / build_arena_box / build_arena_rc)
+// ---------------------------------------------------------------------------
+
+/// Generates the arena `str`-tail factory for one `multitude` pointer type.
+pub fn factory_for_str_arg_ap(macro_args: &MacroArgs, struct_info: &StructInfo, ptr: &ArenaPtrKind) -> TokenStream {
+    let header_layout = header_layout(macro_args, struct_info, false);
+    let tail_layout = tail_layout(&quote! { u8 }, struct_info.tail_field.ty.span());
+    let tuple_assignment = args_tuple_assignment(struct_info);
+    let header_field_writes = header_field_writes(struct_info);
+    let header_params = header_params(struct_info);
+
+    let factory_name = format_ident!("{}{}", &macro_args.base_factory_name, ptr.name_suffix);
+    let visibility = &macro_args.visibility;
+    let ptr_path = &ptr.ptr_path;
+    let alloc_method = &ptr.alloc_method;
+
+    let struct_name = &struct_info.struct_name;
+    let tail_param = &struct_info.tail_param_ident;
+    let tail_field = &struct_info.tail_field_ident;
+    let tail_type = &struct_info.tail_field.ty;
+    let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
+
+    let factory_doc = format!("Creates an instance of `{}<{struct_name}>`.", ptr.display_name);
+    let send_sync_where = ptr.send_sync_where();
+
+    quote! {
+        #[doc = #factory_doc]
+        #[allow(clippy::let_unit_value)]
+        #[allow(clippy::zst_offset)]
+        #[allow(clippy::transmute_undefined_repr)]
+        #visibility fn #factory_name (
+            __arena: &::multitude::Arena,
+            #( #header_params, )*
+            #tail_param: impl ::core::convert::AsRef<str>
+        ) -> #ptr_path<Self> #send_sync_where {
+            #tuple_assignment
+
+            ::core::assert_eq!(::core::any::TypeId::of::<#tail_type>(), ::core::any::TypeId::of::<str>());
+            let s = args.#tail_args_tuple_idx.as_ref();
+            let len = s.len();
+
+            #header_layout
+            let layout = layout.extend(#tail_layout).expect("Struct exceeds maximum size allowed of isize::MAX").0;
+            let layout = layout.pad_to_align();
+
+            unsafe {
+                __arena.#alloc_method::<Self>(layout, len, |fat_ptr: *mut Self| {
+                    #( #header_field_writes )*
+
+                    let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<u8>();
+                    ::core::ptr::copy_nonoverlapping(s.as_ptr(), tail_ptr, len);
+                })
+            }
+        }
+    }
+}
+
+/// Generates the arena `[T]`-tail slice factory for one `multitude` pointer type.
+pub fn factory_for_slice_arg_ap(
+    macro_args: &MacroArgs,
+    struct_info: &StructInfo,
+    tail_elem_type: &Type,
+    ptr: &ArenaPtrKind,
+) -> TokenStream {
+    let copy_bound_tokens: syn::WherePredicate = syn::parse_quote_spanned! {tail_elem_type.span()=>
+        #tail_elem_type: ::core::marker::Copy
+    };
+
+    let mut factory_where_clause = struct_info.struct_generics.where_clause.as_ref().map_or_else(
+        || syn::WhereClause {
+            where_token: syn::token::Where::default(),
+            predicates: Punctuated::new(),
+        },
+        Clone::clone,
+    );
+
+    factory_where_clause.predicates.push(copy_bound_tokens);
+    if ptr.needs_send_sync {
+        factory_where_clause
+            .predicates
+            .push(syn::parse_quote! { Self: ::core::marker::Send + ::core::marker::Sync });
+    }
+
+    let header_layout = header_layout(macro_args, struct_info, false);
+    let tail_layout = tail_layout(tail_elem_type, struct_info.tail_field.ty.span());
+    let tuple_assignment = args_tuple_assignment(struct_info);
+    let header_field_writes = header_field_writes(struct_info);
+    let header_params = header_params(struct_info);
+
+    let factory_name = format_ident!("{}{}_from_slice", &macro_args.base_factory_name, ptr.name_suffix);
+    let visibility = &macro_args.visibility;
+    let ptr_path = &ptr.ptr_path;
+    let alloc_method = &ptr.alloc_method;
+
+    let tail_param = &struct_info.tail_param_ident;
+    let tail_field = &struct_info.tail_field_ident;
+    let struct_name = &struct_info.struct_name;
+    let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
+
+    let factory_doc = format!("Creates an instance of `{}<{struct_name}>`.", ptr.display_name);
+
+    quote! {
+        #[doc = #factory_doc]
+        #[allow(clippy::let_unit_value)]
+        #[allow(clippy::zst_offset)]
+        #[allow(clippy::transmute_undefined_repr)]
+        #visibility fn #factory_name (
+            __arena: &::multitude::Arena,
+            #( #header_params, )*
+            #tail_param: &[#tail_elem_type]
+        ) -> #ptr_path<Self> #factory_where_clause {
+            #tuple_assignment
+
+            let s = args.#tail_args_tuple_idx.as_ref();
+            let len = s.len();
+
+            #header_layout
+            let layout = layout.extend(#tail_layout).expect("Struct exceeds maximum size allowed of isize::MAX").0;
+            let layout = layout.pad_to_align();
+
+            unsafe {
+                __arena.#alloc_method::<Self>(layout, len, |fat_ptr: *mut Self| {
+                    #( #header_field_writes )*
+
+                    let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#tail_elem_type>();
+                    // Byte copy: the destination tail may be under-aligned (e.g. `#[repr(packed)]`).
+                    ::core::ptr::copy_nonoverlapping(
+                        s.as_ptr().cast::<u8>(),
+                        tail_ptr.cast::<u8>(),
+                        len * ::core::mem::size_of::<#tail_elem_type>(),
+                    );
+                })
+            }
+        }
+    }
+}
+
+/// Generates the arena `[T]`-tail iterator factory for one `multitude` pointer type.
+pub fn factory_for_iter_arg_ap(macro_args: &MacroArgs, struct_info: &StructInfo, tail_type: &Type, ptr: &ArenaPtrKind) -> TokenStream {
+    let header_layout = header_layout(macro_args, struct_info, false);
+    let tail_layout = tail_layout(tail_type, struct_info.tail_field.ty.span());
+    let tuple_assignment = args_tuple_assignment(struct_info);
+    let header_field_writes = header_field_writes(struct_info);
+    let header_params = header_params(struct_info);
+
+    let visibility = &macro_args.visibility;
+    let factory_name = format_ident!("{}{}", &macro_args.base_factory_name, ptr.name_suffix);
+    let ptr_path = &ptr.ptr_path;
+    let alloc_method = &ptr.alloc_method;
+    let iter_generic_param = &macro_args.generic_name;
+    let guard_type_tokens = arena_iter_guard_type();
+
+    let tail_param = &struct_info.tail_param_ident;
+    let tail_field = &struct_info.tail_field_ident;
+    let struct_name = &struct_info.struct_name;
+    let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
+
+    let factory_doc = format!(
+        "Creates an instance of `{}<{struct_name}>`. \
+         Prefer `{}_from_slice` for vectors or arrays instead for better performance.",
+        ptr.display_name, ptr.name_suffix,
+    );
+    let send_sync_predicate = ptr.send_sync_predicate();
+
+    quote! {
+        #[doc = #factory_doc]
+        #[allow(clippy::let_unit_value)]
+        #[allow(clippy::zst_offset)]
+        #[allow(clippy::transmute_undefined_repr)]
+        #visibility fn #factory_name <#iter_generic_param> (
+            __arena: &::multitude::Arena,
+            #( #header_params, )*
+            #tail_param: #iter_generic_param
+        ) -> #ptr_path<Self>
+        where
+            #iter_generic_param: ::core::iter::IntoIterator<Item = #tail_type>,
+            <#iter_generic_param as ::core::iter::IntoIterator>::IntoIter: ::core::iter::ExactSizeIterator
+            #send_sync_predicate
+        {
+            #guard_type_tokens
+            #tuple_assignment
+
+            let iter = args.#tail_args_tuple_idx.into_iter();
+            let len = iter.len();
+
+            #header_layout
+            let layout = layout.extend(#tail_layout).expect("Struct exceeds maximum size allowed of isize::MAX").0;
+            let layout = layout.pad_to_align();
+
+            unsafe {
+                __arena.#alloc_method::<Self>(layout, len, |fat_ptr: *mut Self| {
+                    let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#tail_type>();
+
+                    // If the user iterator panics partway through, this guard drops
+                    // the tail elements already written into the arena. The arena
+                    // owns the storage, so it only drops elements and never frees it.
+                    let mut guard = Guard { tail_ptr, initialized: 0 };
+                    iter.for_each(|element| {
+                        ::core::assert!(guard.initialized < len, "Mismatch between iterator-reported length and the number of items produced by the iterator");
+                        // Unaligned write: the tail may be under-aligned (e.g. `#[repr(packed)]`).
+                        ::core::ptr::write_unaligned(tail_ptr.add(guard.initialized), element);
+                        guard.initialized += 1;
+                    });
+
+                    ::core::assert_eq!(guard.initialized, len, "Mismatch between iterator-reported length and the number of items produced by the iterator");
+
+                    // Header fields are written only after the tail is initialized
+                    // so an iterator panic drops them via `args` rather than leaking.
+                    #( #header_field_writes )*
+
+                    ::core::mem::forget(guard);
+                })
+            }
+        }
+    }
+}
+
+/// Generates the arena `dyn Trait`-tail factory for one `multitude` pointer type.
+pub fn factory_for_trait_arg_ap(
+    macro_args: &MacroArgs,
+    struct_info: &StructInfo,
+    trait_path: &syn::Path,
+    ptr: &ArenaPtrKind,
+) -> TokenStream {
+    let header_layout = header_layout(macro_args, struct_info, true);
+    let tuple_assignment = args_tuple_assignment(struct_info);
+    let header_field_writes = header_field_writes(struct_info);
+    let header_params = header_params(struct_info);
+
+    let factory_name = format_ident!("{}{}", &macro_args.base_factory_name, ptr.name_suffix);
+    let ptr_path = &ptr.ptr_path;
+    let alloc_method = &ptr.alloc_method;
+    let trait_generic = &macro_args.generic_name;
+    let visibility = &macro_args.visibility;
+
+    let struct_name = &struct_info.struct_name;
+    let tail_param = &struct_info.tail_param_ident;
+    let tail_field = &struct_info.tail_field_ident;
+    let tail_args_tuple_idx = Index::from(struct_info.header_fields.len());
+
+    let factory_doc = format!("Builds an instance of `{}<{struct_name}>`.", ptr.display_name);
+    let send_sync_predicate = ptr.send_sync_predicate();
+
+    quote! {
+        #[doc = #factory_doc]
+        #[allow(clippy::let_unit_value)]
+        #[allow(clippy::zst_offset)]
+        #[allow(clippy::transmute_undefined_repr)]
+        #visibility fn #factory_name <#trait_generic> (
+            __arena: &::multitude::Arena,
+            #( #header_params, )*
+            #tail_param: #trait_generic
+        ) -> #ptr_path<Self>
+        where
+            #trait_generic: #trait_path + Sized + 'static
+            #send_sync_predicate
+        {
+            #tuple_assignment
+
+            let s = args.#tail_args_tuple_idx;
+            let trait_object: &(dyn #trait_path) = &s;
+            let metadata = ::multitude::dst::metadata(trait_object as *const (dyn #trait_path));
+            // `vtable` is referenced by the `#header_layout` expansion below.
+            let vtable: *const () = unsafe { ::core::mem::transmute::<&(dyn #trait_path), (*const #trait_generic, *const ())>(trait_object).1 };
+
+            #header_layout
+            let layout = layout.extend(::core::alloc::Layout::new::<#trait_generic>()).expect("Struct exceeds maximum size allowed of isize::MAX").0;
+            let layout = layout.pad_to_align();
+
+            unsafe {
+                __arena.#alloc_method::<Self>(layout, metadata, |fat_ptr: *mut Self| {
+                    #( #header_field_writes )*
+
+                    let tail_ptr = (&raw mut (*fat_ptr).#tail_field).cast::<#trait_generic>();
+                    ::core::ptr::write(tail_ptr, ::core::ptr::read(::core::ptr::addr_of!(s)));
+                    ::core::mem::forget(s);
+                })
             }
         }
     }
@@ -1166,16 +1589,16 @@ pub fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynRe
     factories.push(gen_into_arc(&macro_args, &struct_info));
     factories.push(gen_into_rc(&macro_args, &struct_info));
 
-    // Create PtrKind instances for all three pointer types
     let ptr_kinds = [
         PtrKind::new_box(macro_args.no_std),
         PtrKind::new_arc(macro_args.no_std),
         PtrKind::new_rc(macro_args.no_std),
     ];
 
+    let arena_ptr_kinds = [ArenaPtrKind::arc(), ArenaPtrKind::boxed(), ArenaPtrKind::rc()];
+
     match &struct_info.tail_kind {
         TailKind::Slice(elem_type) => {
-            // Generate factories for all pointer types using unified approach
             for ptr in &ptr_kinds {
                 factories.push(factory_for_iter_arg(&macro_args, &struct_info, elem_type, ptr));
                 factories.push(factory_for_slice_arg(&macro_args, &struct_info, elem_type, ptr));
@@ -1187,22 +1610,35 @@ pub fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynRe
                 }
             }
 
+            if macro_args.arena {
+                for ptr in &arena_ptr_kinds {
+                    factories.push(factory_for_iter_arg_ap(&macro_args, &struct_info, elem_type, ptr));
+                    factories.push(factory_for_slice_arg_ap(&macro_args, &struct_info, elem_type, ptr));
+                }
+            }
+
             // Box-specific destructurer functionality (only for Box)
             factories.push(r#box::destructurer_with_iter(&macro_args, &struct_info));
             iterator_type = Some(r#box::destructurer_iterator_type(&macro_args, &struct_info, elem_type));
         }
-
         TailKind::Str => {
-            // Generate factories for all pointer types using unified approach
             for ptr in &ptr_kinds {
                 factories.push(factory_for_str_arg(&macro_args, &struct_info, ptr));
             }
+            if macro_args.arena {
+                for ptr in &arena_ptr_kinds {
+                    factories.push(factory_for_str_arg_ap(&macro_args, &struct_info, ptr));
+                }
+            }
         }
-
         TailKind::TraitObject(trait_path) => {
-            // Generate factories for all pointer types using unified approach
             for ptr in &ptr_kinds {
                 factories.push(factory_for_trait_arg(&macro_args, &struct_info, trait_path, ptr));
+            }
+            if macro_args.arena {
+                for ptr in &arena_ptr_kinds {
+                    factories.push(factory_for_trait_arg_ap(&macro_args, &struct_info, trait_path, ptr));
+                }
             }
         }
     }
@@ -1265,6 +1701,22 @@ pub fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynRe
     let (impl_generics, ty_generics, where_clause) = struct_info.struct_generics.split_for_impl();
     let struct_name_ident = struct_info.struct_name;
 
+    // When the `arena` factories are emitted, the struct is fed to
+    // `Arena::alloc_dst_arc::<Self>` which requires `Self: Pointee`.
+    // The metadata mirrors that of the tail field's type (`usize` for
+    // `[T]` / `str`, `DynMetadata<dyn Trait>` for `dyn Trait`).
+    let pointee_impl = macro_args.arena.then(|| {
+        let metadata_type: TokenStream = match &struct_info.tail_kind {
+            TailKind::Slice(_) | TailKind::Str => quote! { ::core::primitive::usize },
+            TailKind::TraitObject(trait_path) => quote! { ::multitude::dst::DynMetadata<dyn #trait_path> },
+        };
+        quote! {
+            unsafe impl #impl_generics ::multitude::dst::Pointee for #struct_name_ident #ty_generics #where_clause {
+                type Metadata = #metadata_type;
+            }
+        }
+    });
+
     Ok(quote! {
         #input_struct
 
@@ -1272,6 +1724,7 @@ pub fn make_dst_factory_impl(attr_args: TokenStream, item: TokenStream) -> SynRe
             #( #factories )*
         }
 
+        #pointee_impl
         #iterator_type
         #serde_tokens
         #clone_tokens
